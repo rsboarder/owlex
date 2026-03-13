@@ -32,6 +32,10 @@ class AiChatRunner(AgentRunner):
     def name(self) -> str:
         return "aichat"
 
+    @property
+    def cli_command(self) -> str:
+        return "aichat"
+
     def build_exec_command(
         self,
         prompt: str,

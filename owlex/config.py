@@ -48,6 +48,14 @@ class AiChatConfig:
 
 
 @dataclass(frozen=True)
+class CursorConfig:
+    """Configuration for Cursor Agent CLI integration."""
+    model: str | None = None  # Model name (e.g., gpt-5, sonnet-4)
+    force_mode: bool = False  # Auto-approve commands (--force)
+    clean_output: bool = True
+
+
+@dataclass(frozen=True)
 class CouncilConfig:
     """Configuration for council orchestration."""
     exclude_agents: frozenset[str] = frozenset()  # Agents to exclude from council
@@ -63,6 +71,7 @@ class OwlexConfig:
     opencode: OpenCodeConfig
     claudeor: ClaudeORConfig
     aichat: AiChatConfig
+    cursor: CursorConfig
     council: CouncilConfig
     default_timeout: int = 300
 
@@ -110,6 +119,12 @@ def load_config() -> OwlexConfig:
         clean_output=os.environ.get("AICHAT_CLEAN_OUTPUT", "true").lower() == "true",
     )
 
+    cursor = CursorConfig(
+        model=os.environ.get("CURSOR_MODEL") or None,
+        force_mode=os.environ.get("CURSOR_FORCE_MODE", "false").lower() == "true",
+        clean_output=os.environ.get("CURSOR_CLEAN_OUTPUT", "true").lower() == "true",
+    )
+
     # Parse council exclude agents (comma-separated list)
     exclude_raw = os.environ.get("COUNCIL_EXCLUDE_AGENTS", "")
     exclude_agents = frozenset(
@@ -142,6 +157,7 @@ def load_config() -> OwlexConfig:
         opencode=opencode,
         claudeor=claudeor,
         aichat=aichat,
+        cursor=cursor,
         council=council,
         default_timeout=timeout,
     )

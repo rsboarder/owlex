@@ -12,6 +12,12 @@ from typing import Callable
 from ..config import config
 from .base import AgentRunner, AgentCommand
 
+# Patterns in stderr that indicate fatal errors — kill process immediately
+GEMINI_FAIL_PATTERNS = [
+    "QUOTA_EXHAUSTED",
+    "You have exhausted your capacity",
+]
+
 
 def _get_gemini_project_hash(working_directory: str) -> str:
     """
@@ -26,6 +32,19 @@ def _get_gemini_project_hash(working_directory: str) -> str:
     # Gemini uses SHA256 of the absolute path
     abs_path = os.path.abspath(working_directory)
     return hashlib.sha256(abs_path.encode()).hexdigest()
+
+
+def _get_stable_tmpdir(working_directory: str) -> str:
+    """
+    Get a stable tmpdir for Gemini based on working directory.
+
+    Uses a deterministic path so R1 and R2 share the same cwd,
+    which means Gemini's session hash matches across rounds.
+    """
+    dir_hash = hashlib.md5(working_directory.encode()).hexdigest()[:12]
+    tmpdir = Path(os.environ.get("TMPDIR", "/tmp")) / f"owlex-gemini-{dir_hash}"
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    return str(tmpdir)
 
 
 async def get_gemini_session_for_project(
@@ -112,6 +131,10 @@ class GeminiRunner(AgentRunner):
     def name(self) -> str:
         return "gemini"
 
+    @property
+    def cli_command(self) -> str:
+        return "gemini"
+
     def build_exec_command(
         self,
         prompt: str,
@@ -122,22 +145,23 @@ class GeminiRunner(AgentRunner):
         """Build command for starting a new Gemini session."""
         full_command = ["gemini"]
 
-        if config.gemini.yolo_mode:
-            full_command.extend(["--approval-mode", "yolo"])
+        # Use yolo mode to prevent tool approval hangs in non-interactive mode.
+        # Run from a stable temp dir so gemini can't accidentally write to the project.
+        # --include-directories gives read access to the actual project.
+        full_command.extend(["--approval-mode", "yolo"])
 
+        safe_cwd = _get_stable_tmpdir(working_directory) if working_directory else None
         if working_directory:
             full_command.extend(["--include-directories", working_directory])
 
-        # Pass prompt via stdin to prevent prompt-as-flag injection
-        # Gemini reads from stdin when no positional prompt is provided
-        # This ensures prompts starting with - aren't parsed as CLI flags
         return AgentCommand(
             command=full_command,
-            prompt=prompt,  # Prompt passed via stdin
-            cwd=working_directory,
+            prompt=prompt,
+            cwd=safe_cwd,
             output_prefix="Gemini Output",
             not_found_hint="Please ensure Gemini CLI is installed (npm install -g @google/gemini-cli).",
             stream=True,
+            fail_patterns=GEMINI_FAIL_PATTERNS,
         )
 
     def build_resume_command(
@@ -151,22 +175,23 @@ class GeminiRunner(AgentRunner):
         """Build command for resuming an existing Gemini session."""
         full_command = ["gemini"]
 
-        if config.gemini.yolo_mode:
-            full_command.extend(["--approval-mode", "yolo"])
+        full_command.extend(["--approval-mode", "yolo"])
 
+        # Reuse the same stable tmpdir from R1 so session hash matches
+        safe_cwd = _get_stable_tmpdir(working_directory) if working_directory else None
         if working_directory:
             full_command.extend(["--include-directories", working_directory])
 
         full_command.extend(["-r", session_ref])
 
-        # Pass prompt via stdin to prevent prompt-as-flag injection
         return AgentCommand(
             command=full_command,
-            prompt=prompt,  # Prompt passed via stdin
-            cwd=working_directory,
+            prompt=prompt,
+            cwd=safe_cwd,
             output_prefix="Gemini Resume Output",
             not_found_hint="Please ensure Gemini CLI is installed (npm install -g @google/gemini-cli).",
             stream=False,  # Resume uses non-streaming mode
+            fail_patterns=GEMINI_FAIL_PATTERNS,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:
@@ -183,27 +208,23 @@ class GeminiRunner(AgentRunner):
 
         Gemini CLI uses index numbers for resume (-r 1), not UUIDs.
         We return "1" (most recent by index) only if we verify that a session
-        was actually created for this project since since_mtime.
+        was actually created since since_mtime.
 
-        Note: Gemini's -r flag uses 1-indexed session ordering where 1 is most recent.
-        The ordering is chronological within the project's session directory.
-        We verify a session exists for the current project hash before returning "1".
-
-        Args:
-            output: Ignored (Gemini doesn't output session IDs)
-            since_mtime: Only consider sessions created after this timestamp
-            working_directory: Project directory to scope session search
-
-        Returns:
-            "1" if a valid session exists for this project, None otherwise
+        Gemini stores sessions under a hash of its cwd. Since we use a stable
+        tmpdir derived from working_directory, we look up sessions using that
+        tmpdir path (not the project directory).
         """
-        # Check if a session was created for this project
+        if not working_directory:
+            return None
+
+        # Gemini's session hash is based on its cwd (our stable tmpdir),
+        # not the project directory
+        gemini_cwd = _get_stable_tmpdir(working_directory)
+
         if await get_gemini_session_for_project(
-            working_directory=working_directory,
+            working_directory=gemini_cwd,
             since_mtime=since_mtime,
         ):
-            # Return "1" as the session index - it refers to the most recent session
-            # This is project-scoped by Gemini CLI via the directory hash
             return "1"
         return None
 

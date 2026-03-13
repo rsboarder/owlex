@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
 
 from .models import TaskResponse, ErrorCode, Agent
-from .engine import engine, DEFAULT_TIMEOUT, codex_runner, gemini_runner, opencode_runner, claudeor_runner, aichat_runner
+from .engine import engine, DEFAULT_TIMEOUT, codex_runner, gemini_runner, opencode_runner, claudeor_runner, aichat_runner, cursor_runner
 from .council import Council
 from .config import config
 from .roles import get_resolver
@@ -74,17 +74,24 @@ def _get_aichat_model() -> str:
     return model if model else "default"
 
 
+def _get_cursor_model() -> str:
+    """Get Cursor Agent model from env or default."""
+    model = os.environ.get("CURSOR_MODEL", "").strip()
+    return model if model else "default"
+
+
 @mcp.resource("owlex://agents")
 async def get_agents() -> str:
     """List available agents and their configuration."""
     excluded = config.council.exclude_agents
 
     # Query CLI versions in parallel
-    codex_ver, gemini_ver, opencode_ver, aichat_ver = await asyncio.gather(
+    codex_ver, gemini_ver, opencode_ver, aichat_ver, cursor_ver = await asyncio.gather(
         _get_cli_version("codex"),
         _get_cli_version("gemini"),
         _get_cli_version("opencode"),
         _get_cli_version("aichat"),
+        _get_cli_version("agent"),
     )
 
     agents = {
@@ -123,6 +130,16 @@ async def get_agents() -> str:
             "description": "Multi-provider LLM CLI, bring your own model",
             "config": {
                 "model": config.aichat.model,
+            }
+        },
+        "cursor": {
+            "available": "cursor" not in excluded,
+            "cli_version": cursor_ver,
+            "model": _get_cursor_model(),
+            "description": "Cursor Agent CLI, multi-model coding assistant",
+            "config": {
+                "model": config.cursor.model,
+                "force_mode": config.cursor.force_mode,
             }
         },
     }
@@ -613,6 +630,92 @@ async def resume_aichat_session(
     ).model_dump()
 
 
+# === Cursor Agent Tools ===
+
+@mcp.tool()
+async def start_cursor_session(
+    ctx: Context[ServerSession, None],
+    prompt: str = Field(description="The question or request to send"),
+    working_directory: str | None = Field(default=None, description="Working directory for Cursor Agent (--workspace flag)"),
+) -> dict:
+    """
+    Start a new Cursor Agent CLI session.
+
+    Uses the Cursor Agent CLI for AI-powered coding assistance. Configure model via
+    CURSOR_MODEL env var. Requires a Cursor subscription.
+    """
+    if not prompt or not prompt.strip():
+        return TaskResponse(success=False, error="'prompt' parameter is required.", error_code=ErrorCode.INVALID_ARGS).model_dump()
+
+    working_directory, error = _validate_working_directory(working_directory)
+    if error:
+        return TaskResponse(success=False, error=error, error_code=ErrorCode.INVALID_ARGS).model_dump()
+
+    task = engine.create_task(
+        command=f"{Agent.CURSOR.value}_exec",
+        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        context=ctx,
+    )
+
+    task.async_task = asyncio.create_task(engine.run_agent(
+        task, cursor_runner, mode="exec",
+        prompt=prompt.strip(), working_directory=working_directory
+    ))
+
+    model_info = f" ({config.cursor.model})" if config.cursor.model else ""
+    return TaskResponse(
+        success=True,
+        task_id=task.task_id,
+        status=task.status,
+        message=f"Cursor{model_info} session started. Use wait_for_task to get result.",
+    ).model_dump()
+
+
+@mcp.tool()
+async def resume_cursor_session(
+    ctx: Context[ServerSession, None],
+    prompt: str = Field(description="The question or request to send to the resumed session"),
+    session_id: str | None = Field(default=None, description="Chat ID to resume (uses --continue if not provided)"),
+    working_directory: str | None = Field(default=None, description="Working directory for Cursor Agent (--workspace flag)"),
+) -> dict:
+    """Resume an existing Cursor Agent session with full conversation history."""
+    if not prompt or not prompt.strip():
+        return TaskResponse(success=False, error="'prompt' parameter is required.", error_code=ErrorCode.INVALID_ARGS).model_dump()
+
+    working_directory, error = _validate_working_directory(working_directory)
+    if error:
+        return TaskResponse(success=False, error=error, error_code=ErrorCode.INVALID_ARGS).model_dump()
+
+    use_continue = not session_id or not session_id.strip()
+    session_ref = "--continue" if use_continue else session_id.strip()
+
+    if not use_continue and not cursor_runner.validate_session_id(session_ref):
+        return TaskResponse(
+            success=False,
+            error=f"Invalid session_id: '{session_id}' - contains disallowed characters",
+            error_code=ErrorCode.INVALID_ARGS
+        ).model_dump()
+
+    task = engine.create_task(
+        command=f"{Agent.CURSOR.value}_resume",
+        args={"session_id": session_ref, "prompt": prompt.strip(), "working_directory": working_directory},
+        context=ctx,
+    )
+
+    task.async_task = asyncio.create_task(engine.run_agent(
+        task, cursor_runner, mode="resume",
+        prompt=prompt.strip(), session_ref=session_ref, working_directory=working_directory
+    ))
+
+    model_info = f" ({config.cursor.model})" if config.cursor.model else ""
+    return TaskResponse(
+        success=True,
+        task_id=task.task_id,
+        status=task.status,
+        message=f"Cursor{model_info} resume started{' (continue)' if use_continue else f' for session {session_id}'}. Use wait_for_task to get result.",
+    ).model_dump()
+
+
 # === Task Management Tools ===
 
 @mcp.tool()
@@ -903,6 +1006,54 @@ async def _run_council_deliberation(
 
 
 @mcp.tool()
+async def agent_timing(
+    last_n: int = Field(default=20, description="Number of recent entries to return"),
+    agent_filter: str | None = Field(default=None, description="Filter by agent name (e.g. 'codex', 'gemini')"),
+) -> str:
+    """Show recent agent execution timing from the persistent log at ~/.owlex/logs/timing.jsonl.
+    Use this to diagnose which CLI agent is slow."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    log_path = _Path.home() / ".owlex" / "logs" / "timing.jsonl"
+    if not log_path.exists():
+        return _json.dumps({"message": "No timing data yet. Run a council or agent task first.", "entries": []})
+
+    entries = []
+    for line in log_path.read_text().strip().splitlines():
+        try:
+            entry = _json.loads(line)
+            if agent_filter and agent_filter.lower() not in entry.get("command", "").lower():
+                continue
+            entries.append(entry)
+        except _json.JSONDecodeError:
+            continue
+
+    recent = entries[-last_n:]
+    recent.reverse()  # Most recent first
+
+    # Compute per-agent stats from all entries
+    from collections import defaultdict
+    agent_stats: dict[str, list[float]] = defaultdict(list)
+    for e in entries:
+        cmd = e.get("command", "")
+        dur = e.get("duration_s", 0)
+        if dur > 0:
+            agent_stats[cmd].append(dur)
+
+    summary = {}
+    for cmd, durations in sorted(agent_stats.items()):
+        summary[cmd] = {
+            "count": len(durations),
+            "avg_s": round(sum(durations) / len(durations), 1),
+            "max_s": round(max(durations), 1),
+            "min_s": round(min(durations), 1),
+        }
+
+    return _json.dumps({"summary": summary, "recent": recent}, indent=2)
+
+
+@mcp.tool()
 async def council_ask(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or task to send to the council"),
@@ -962,6 +1113,17 @@ async def council_ask(
     if error:
         return TaskResponse(success=False, error=error, error_code=ErrorCode.INVALID_ARGS).model_dump()
 
+    # Auto-parse stringified JSON for roles (MCP clients may serialize as string)
+    if isinstance(roles, str):
+        try:
+            roles = json.loads(roles)
+        except (json.JSONDecodeError, TypeError):
+            return TaskResponse(
+                success=False,
+                error=f"Invalid roles format: expected a JSON list or dict, got string: {roles[:100]}",
+                error_code=ErrorCode.INVALID_ARGS
+            ).model_dump()
+
     # Validate that roles and team are not both specified
     if roles is not None and team is not None:
         return TaskResponse(
@@ -972,7 +1134,7 @@ async def council_ask(
 
     # Early validation of roles/team to return proper error codes
     excluded = config.council.exclude_agents
-    active_agents = [a for a in ["codex", "gemini", "opencode", "claudeor", "aichat"] if a not in excluded]
+    active_agents = [a for a in ["codex", "gemini", "opencode", "claudeor", "aichat", "cursor"] if a not in excluded]
 
     # Use default team from config if no roles/team specified
     effective_team = team if team is not None else config.council.default_team

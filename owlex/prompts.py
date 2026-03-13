@@ -11,6 +11,19 @@ if TYPE_CHECKING:
     from .roles import RoleDefinition
 
 
+# === Council System Instruction ===
+# Prepended to every council prompt (R1 and R2) to enforce read-only behavior.
+# Agents with yolo/auto-approve modes would otherwise create and modify files.
+
+COUNCIL_SYSTEM_INSTRUCTION = (
+    "IMPORTANT: This is a council deliberation. You are an advisor, not an implementer.\n"
+    "- DO NOT create, modify, or delete any files.\n"
+    "- DO NOT run commands that change state (git commit, npm install, etc.).\n"
+    "- You MAY read files to inform your analysis.\n"
+    "- Provide your analysis, recommendations, and code suggestions as text only.\n\n"
+)
+
+
 # === Round 2: Deliberation Prompts ===
 
 DELIBERATION_INTRO_REVISE = (
@@ -43,6 +56,7 @@ def build_deliberation_prompt(
     opencode_answer: str | None = None,
     claudeor_answer: str | None = None,
     aichat_answer: str | None = None,
+    cursor_answer: str | None = None,
     claude_answer: str | None = None,
     critique: bool = False,
     include_original: bool = False,
@@ -76,7 +90,7 @@ def build_deliberation_prompt(
         intro = DELIBERATION_INTRO_REVISE
         instruction = DELIBERATION_INSTRUCTION_REVISE
 
-    parts = [intro]
+    parts = [COUNCIL_SYSTEM_INSTRUCTION + intro]
 
     # Include original prompt when exec fallback is used (agent has no R1 context)
     if include_original and original_prompt:
@@ -100,6 +114,9 @@ def build_deliberation_prompt(
     if aichat_answer:
         parts.extend(["", "AICHAT'S ANSWER:", aichat_answer])
 
+    if cursor_answer:
+        parts.extend(["", "CURSOR'S ANSWER:", cursor_answer])
+
     parts.extend(["", instruction])
 
     return "\n".join(parts)
@@ -109,18 +126,17 @@ def build_deliberation_prompt(
 
 def inject_role_prefix(prompt: str, role: RoleDefinition | None) -> str:
     """
-    Inject role prefix into a prompt for Round 1.
+    Inject council system instruction and role prefix into a prompt for Round 1.
 
     Args:
         prompt: The original prompt
         role: The role definition (None or neutral role = no injection)
 
     Returns:
-        Prompt with role prefix prepended (or original if no role)
+        Prompt with system instruction and role prefix prepended
     """
-    if role is None or not role.round_1_prefix:
-        return prompt
-    return f"{role.round_1_prefix}{prompt}"
+    role_prefix = role.round_1_prefix if role and role.round_1_prefix else ""
+    return f"{COUNCIL_SYSTEM_INSTRUCTION}{role_prefix}{prompt}"
 
 
 def build_deliberation_prompt_with_role(
@@ -131,6 +147,7 @@ def build_deliberation_prompt_with_role(
     opencode_answer: str | None = None,
     claudeor_answer: str | None = None,
     aichat_answer: str | None = None,
+    cursor_answer: str | None = None,
     claude_answer: str | None = None,
     critique: bool = False,
     include_original: bool = False,
@@ -163,6 +180,7 @@ def build_deliberation_prompt_with_role(
         opencode_answer=opencode_answer,
         claudeor_answer=claudeor_answer,
         aichat_answer=aichat_answer,
+        cursor_answer=cursor_answer,
         claude_answer=claude_answer,
         critique=critique,
         include_original=include_original,

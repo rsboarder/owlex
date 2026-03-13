@@ -37,6 +37,7 @@ class Agent(str, Enum):
     OPENCODE = "opencode"
     CLAUDEOR = "claudeor"  # Claude Code via OpenRouter
     AICHAT = "aichat"  # aichat multi-provider CLI
+    CURSOR = "cursor"  # Cursor Agent CLI
 
 
 @dataclass
@@ -48,6 +49,7 @@ class Task:
     args: dict
     start_time: datetime
     context: Any | None = field(default=None, repr=False)  # MCP Context
+    council_id: str | None = None  # Groups tasks belonging to the same council run
     completion_time: datetime | None = None
     result: str | None = None
     error: str | None = None
@@ -105,6 +107,15 @@ class CouncilRound(BaseModel):
     opencode: AgentResponse | None = None
     claudeor: AgentResponse | None = None  # Claude Code via OpenRouter
     aichat: AgentResponse | None = None  # aichat multi-provider CLI
+    cursor: AgentResponse | None = None  # Cursor Agent CLI
+
+
+class AgentTiming(BaseModel):
+    """Per-agent timing for performance diagnostics."""
+    agent: str
+    round: int
+    duration_seconds: float
+    status: str
 
 
 class CouncilMetadata(BaseModel):
@@ -112,6 +123,8 @@ class CouncilMetadata(BaseModel):
     total_duration_seconds: float
     rounds: int
     log: list[str] = Field(default_factory=list)  # Progress log entries
+    timing: list[AgentTiming] = Field(default_factory=list)  # Per-agent timing, sorted slowest first
+    slowest_agent: str | None = None  # Agent name that took the longest
 
 
 class CouncilResponse(BaseModel):

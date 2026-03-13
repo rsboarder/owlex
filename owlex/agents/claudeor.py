@@ -112,6 +112,10 @@ class ClaudeORRunner(AgentRunner):
     def name(self) -> str:
         return "claudeor"
 
+    @property
+    def cli_command(self) -> str:
+        return "claude"
+
     def _get_env_overrides(self) -> dict[str, str]:
         """Get environment variable overrides for OpenRouter."""
         import os

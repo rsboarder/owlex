@@ -272,6 +272,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.ARCHITECT.value,
             "claudeor": RoleId.DX.value,
             "aichat": RoleId.TESTING.value,
+            "cursor": RoleId.MAINTAINER.value,
         },
     ),
 
@@ -285,6 +286,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.TESTING.value,
             "claudeor": RoleId.DX.value,
             "aichat": RoleId.SECURITY.value,
+            "cursor": RoleId.ARCHITECT.value,
         },
     ),
 
@@ -298,6 +300,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.MAINTAINER.value,
             "claudeor": RoleId.DX.value,
             "aichat": RoleId.SKEPTIC.value,
+            "cursor": RoleId.SECURITY.value,
         },
     ),
 
@@ -311,6 +314,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.SKEPTIC.value,
             "claudeor": RoleId.SKEPTIC.value,
             "aichat": RoleId.SKEPTIC.value,
+            "cursor": RoleId.SKEPTIC.value,
         },
     ),
 
@@ -324,6 +328,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.MAINTAINER.value,
             "claudeor": RoleId.DX.value,
             "aichat": RoleId.TESTING.value,
+            "cursor": RoleId.SKEPTIC.value,
         },
     ),
 
@@ -337,6 +342,7 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "opencode": RoleId.DX.value,            # Best tone/steerability for docs
             "claudeor": RoleId.SKEPTIC.value,       # Fast, unconstrained critic
             "aichat": RoleId.PERFORMANCE.value,     # Flexible model for perf analysis
+            "cursor": RoleId.SECURITY.value,        # Multi-model agent for security review
         },
     ),
 }
@@ -531,7 +537,7 @@ class RoleResolver:
     ) -> dict[str, RoleDefinition]:
         """Resolve explicit agent->role mapping."""
         # Validate for unknown agent keys (typos like "codexx")
-        known_agents = {"codex", "gemini", "opencode", "claudeor", "aichat"}
+        known_agents = {"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"}
         unknown_keys = set(mapping.keys()) - known_agents
         if unknown_keys:
             raise ValueError(f"Unknown agent(s) in role mapping: {', '.join(sorted(unknown_keys))}")

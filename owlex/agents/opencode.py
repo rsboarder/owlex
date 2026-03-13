@@ -137,6 +137,10 @@ class OpenCodeRunner(AgentRunner):
     def name(self) -> str:
         return "opencode"
 
+    @property
+    def cli_command(self) -> str:
+        return "opencode"
+
     def build_exec_command(
         self,
         prompt: str,

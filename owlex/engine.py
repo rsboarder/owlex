@@ -4,15 +4,18 @@ Handles subprocess management, streaming, and task lifecycle.
 """
 
 import asyncio
+import json
+import os
 import sys
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .config import config
 from .models import Task, TaskStatus, AgentResponse, Agent
-from .agents import CodexRunner, GeminiRunner, OpenCodeRunner, ClaudeORRunner, AiChatRunner
+from .agents import CodexRunner, GeminiRunner, OpenCodeRunner, ClaudeORRunner, AiChatRunner, CursorRunner
 from .agents.base import AgentRunner, AgentCommand
 
 
@@ -40,6 +43,7 @@ def build_agent_response(
         Agent.OPENCODE.value: "OpenCode Output:\n\n",
         Agent.CLAUDEOR.value: "Claude (OpenRouter) Output:\n\n",
         Agent.AICHAT.value: "AiChat Output:\n\n",
+        Agent.CURSOR.value: "Cursor Output:\n\n",
     }
     prefix = prefix_map.get(agent_name, "")
 
@@ -66,6 +70,7 @@ gemini_runner = GeminiRunner()
 opencode_runner = OpenCodeRunner()
 claudeor_runner = ClaudeORRunner()
 aichat_runner = AiChatRunner()
+cursor_runner = CursorRunner()
 
 # Map Agent enum to runner instances
 AGENT_RUNNERS: dict[Agent, AgentRunner] = {
@@ -74,6 +79,7 @@ AGENT_RUNNERS: dict[Agent, AgentRunner] = {
     Agent.OPENCODE: opencode_runner,
     Agent.CLAUDEOR: claudeor_runner,
     Agent.AICHAT: aichat_runner,
+    Agent.CURSOR: cursor_runner,
 }
 
 
@@ -83,9 +89,14 @@ class TaskEngine:
     Manages task lifecycle, subprocess execution, and streaming.
     """
 
+    # Persistent timing log location
+    TIMING_LOG_DIR = Path.home() / ".owlex" / "logs"
+
     def __init__(self):
         self.tasks: dict[str, Task] = {}
         self._cleanup_task: asyncio.Task | None = None
+        # Ensure log directory exists
+        self.TIMING_LOG_DIR.mkdir(parents=True, exist_ok=True)
         # Print security warnings on initialization
         config.print_warnings()
 
@@ -157,6 +168,7 @@ class TaskEngine:
         command: str,
         args: dict,
         context: Any = None,
+        council_id: str | None = None,
     ) -> Task:
         """Create and register a new task."""
         task_id = str(uuid.uuid4())
@@ -167,6 +179,7 @@ class TaskEngine:
             args=args,
             start_time=datetime.now(),
             context=context,
+            council_id=council_id,
         )
         self.tasks[task_id] = task
         return task
@@ -188,8 +201,62 @@ class TaskEngine:
             except Exception as e:
                 print(f"[ERROR] Failed to send {level} notification: {e}", file=sys.stderr, flush=True)
 
+    def _log_timing(self, task: Task):
+        """Append task timing to persistent JSONL log at ~/.owlex/logs/timing.jsonl."""
+        if not task.completion_time:
+            return
+        duration = (task.completion_time - task.start_time).total_seconds()
+        entry = {
+            "ts": task.completion_time.isoformat(),
+            "task_id": task.task_id[:8],
+            "command": task.command,
+            "status": task.status,
+            "duration_s": round(duration, 1),
+        }
+        if task.council_id:
+            entry["council_id"] = task.council_id
+        if task.status == "failed" and task.error:
+            entry["error"] = task.error[:200]
+        if task.result:
+            entry["output_chars"] = len(task.result)
+            entry["preview"] = task.result[:500]
+        if task.output_lines:
+            entry["last_lines"] = task.output_lines[-10:]
+        self._write_log(entry)
+
+    def log_council_summary(self, council_id: str, round_num: int, agent_timings: list[tuple[str, float, str]]):
+        """Log a council round summary showing agent completion order.
+
+        Args:
+            council_id: Council session identifier
+            round_num: Round number (1 or 2)
+            agent_timings: List of (agent_name, duration_seconds, status) sorted by completion
+        """
+        ranking = [f"{name}={dur:.1f}s({st})" for name, dur, st in agent_timings]
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "type": "council_round_summary",
+            "council_id": council_id,
+            "round": round_num,
+            "agent_order": ranking,
+            "slowest": agent_timings[-1][0] if agent_timings else None,
+            "fastest": agent_timings[0][0] if agent_timings else None,
+            "spread_s": round(agent_timings[-1][1] - agent_timings[0][1], 1) if len(agent_timings) >= 2 else 0,
+        }
+        self._write_log(entry)
+
+    def _write_log(self, entry: dict):
+        """Write a single JSON entry to the timing log."""
+        try:
+            log_path = self.TIMING_LOG_DIR / "timing.jsonl"
+            with open(log_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            print(f"[owlex] timing log write failed: {e}", file=sys.stderr, flush=True)
+
     async def _emit_task_notification(self, task: Task):
         """Emit task completion/failure notification."""
+        self._log_timing(task)
         if not task.context:
             return
         prefix = "[owlex]"
@@ -208,8 +275,13 @@ class TaskEngine:
         stream: asyncio.StreamReader,
         task: Task,
         stream_name: str,
+        fail_patterns: list[str] | None = None,
     ) -> str:
-        """Read stream line-by-line, storing lines and emitting notifications."""
+        """Read stream line-by-line, storing lines and emitting notifications.
+
+        If fail_patterns is provided and a line matches, the process is killed immediately.
+        Used to detect fatal errors like quota exhaustion without waiting for timeout.
+        """
         lines = []
         while True:
             try:
@@ -219,6 +291,11 @@ class TaskEngine:
                 decoded = line.decode('utf-8', errors='replace').rstrip('\n\r')
                 lines.append(decoded)
                 task.output_lines.append(f"[{stream_name}] {decoded}")
+                # Kill process immediately on fatal pattern match
+                if fail_patterns and any(p in decoded for p in fail_patterns):
+                    if task.process and task.process.returncode is None:
+                        task.process.kill()
+                    break
                 if task.context:
                     try:
                         await task.context.info(f"[{task.task_id[:8]}] {decoded}")
@@ -326,7 +403,10 @@ class TaskEngine:
                     self._read_stream_lines(process.stdout, task, "stdout")
                 )
                 stderr_task = asyncio.create_task(
-                    self._read_stream_lines(process.stderr, task, "stderr")
+                    self._read_stream_lines(
+                        process.stderr, task, "stderr",
+                        fail_patterns=agent_cmd.fail_patterns,
+                    )
                 )
 
                 try:
@@ -396,16 +476,20 @@ class TaskEngine:
                 await self._emit_task_notification(task)
 
         except asyncio.CancelledError:
-            task.status = TaskStatus.CANCELLED.value
-            task.completion_time = datetime.now()
-            task.stream_complete = True
+            # Skip logging if council timeout already set status/completion
+            if not task.completion_time:
+                task.status = TaskStatus.CANCELLED.value
+                task.completion_time = datetime.now()
+                task.stream_complete = True
+                await self._emit_task_notification(task)
+            else:
+                task.stream_complete = True
             if task.process:
                 try:
                     task.process.kill()
                     await task.process.wait()
                 except:
                     pass
-            await self._emit_task_notification(task)
             raise
 
         except FileNotFoundError as e:

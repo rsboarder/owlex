@@ -100,6 +100,10 @@ class CodexRunner(AgentRunner):
     def name(self) -> str:
         return "codex"
 
+    @property
+    def cli_command(self) -> str:
+        return "codex"
+
     def build_exec_command(
         self,
         prompt: str,

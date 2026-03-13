@@ -18,6 +18,7 @@ class AgentCommand:
     not_found_hint: str | None = None
     stream: bool = True
     env_overrides: dict[str, str] | None = None  # Environment variable overrides
+    fail_patterns: list[str] | None = None  # Kill process immediately if stderr matches any pattern
 
 
 class AgentRunner(ABC):
@@ -30,6 +31,12 @@ class AgentRunner(ABC):
     @abstractmethod
     def name(self) -> str:
         """Human-readable name of the agent."""
+        pass
+
+    @property
+    @abstractmethod
+    def cli_command(self) -> str:
+        """The CLI binary name used by this agent (for availability checks)."""
         pass
 
     @abstractmethod
