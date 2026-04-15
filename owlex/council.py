@@ -132,15 +132,16 @@ class Council:
                 role=resolved_roles[seat],
             ))
 
-        # Substituted seats — use model override if configured, else round-robin donors
-        sub_models = config.council.substitution_models or {}
+        # Substituted seats — use override config if set, else round-robin donors
+        sub_overrides = config.council.substitution_models or {}
         if unavailable:
             subs = []
             for i, seat in enumerate(unavailable):
-                model = sub_models.get(seat)
-                if model:
-                    # Pick the first available donor that supports --model
-                    donor = donor_pool[0] if donor_pool else None
+                override = sub_overrides.get(seat)
+                if override:
+                    runner_name, model = override
+                    # Use specified runner, or fall back to first donor
+                    donor = runner_name if runner_name and runner_name in available else (donor_pool[0] if donor_pool else None)
                     if not donor:
                         self.log(f"No donors available for {seat}, skipping")
                         continue

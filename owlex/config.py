@@ -147,15 +147,21 @@ def load_config() -> OwlexConfig:
     donors_raw = os.environ.get("COUNCIL_SUBSTITUTION_DONORS", "codex,cursor")
     substitution_donors = tuple(d.strip().lower() for d in donors_raw.split(",") if d.strip())
 
-    # Parse per-seat model overrides: "opencode:grok-4-20,claudeor:gemini-3.1-pro,aichat:gpt-5.4-mini"
+    # Parse per-seat substitution overrides: "seat:runner:model" or "seat:model" (uses default donor)
+    # Examples: "opencode:cursor:grok-4-20,claudeor:codex:gpt-5.3-codex"
+    #           "opencode:grok-4-20" (uses first donor from substitution_donors)
     sub_models_raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
     substitution_models = None
     if sub_models_raw.strip():
         substitution_models = {}
-        for pair in sub_models_raw.split(","):
-            if ":" in pair:
-                seat, model = pair.strip().split(":", 1)
-                substitution_models[seat.strip().lower()] = model.strip()
+        for entry in sub_models_raw.split(","):
+            parts = [p.strip() for p in entry.strip().split(":")]
+            if len(parts) == 3:
+                seat, runner, model = parts
+                substitution_models[seat.lower()] = (runner.lower(), model)
+            elif len(parts) == 2:
+                seat, model = parts
+                substitution_models[seat.lower()] = (None, model)  # None = use default donor
 
     council = CouncilConfig(
         exclude_agents=exclude_agents,
