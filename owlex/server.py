@@ -965,46 +965,6 @@ async def cancel_task(task_id: str) -> dict:
 
 # === Council Tool ===
 
-async def _run_council_deliberation(
-    task,
-    prompt: str,
-    working_directory: str | None,
-    claude_opinion: str | None,
-    deliberate: bool,
-    critique: bool,
-    timeout: int,
-    roles: dict[str, str] | list[str] | None = None,
-    team: str | None = None,
-):
-    """Run council deliberation and update task with result."""
-    from .models import TaskStatus
-    try:
-        task.status = TaskStatus.RUNNING.value
-        council = Council(context=task.context)
-        response = await council.deliberate(
-            prompt=prompt,
-            working_directory=working_directory,
-            claude_opinion=claude_opinion,
-            deliberate=deliberate,
-            critique=critique,
-            timeout=timeout,
-            roles=roles,
-            team=team,
-        )
-        task.result = response.model_dump_json(indent=2)
-        task.status = TaskStatus.COMPLETED.value
-        task.end_time = datetime.now()
-    except ValueError as e:
-        # Role/team validation errors
-        task.error = str(e)
-        task.status = TaskStatus.FAILED.value
-        task.end_time = datetime.now()
-    except Exception as e:
-        task.error = str(e)
-        task.status = TaskStatus.FAILED.value
-        task.end_time = datetime.now()
-
-
 @mcp.tool()
 async def agent_timing(
     last_n: int = Field(default=20, description="Number of recent entries to return"),
@@ -1132,74 +1092,37 @@ async def council_ask(
             error_code=ErrorCode.INVALID_ARGS
         ).model_dump()
 
-    # Early validation of roles/team to return proper error codes
-    excluded = config.council.exclude_agents
-    active_agents = [a for a in ["codex", "gemini", "opencode", "claudeor", "aichat", "cursor"] if a not in excluded]
-
     # Use default team from config if no roles/team specified
     effective_team = team if team is not None else config.council.default_team
     role_spec = roles if roles is not None else effective_team
+
+    # Run council deliberation synchronously (blocking).
+    # This ensures all MCP notifications happen during the active tool call,
+    # preventing Claude Code from killing the server on unsolicited notifications.
     try:
-        resolver = get_resolver()
-        resolved_roles = resolver.resolve(role_spec, active_agents)
+        council = Council(context=ctx)
+        response = await council.deliberate(
+            prompt=prompt.strip(),
+            working_directory=working_directory,
+            claude_opinion=claude_opinion,
+            deliberate=deliberate,
+            critique=critique,
+            timeout=timeout,
+            roles=role_spec,
+        )
+        return response.model_dump()
     except ValueError as e:
         return TaskResponse(
             success=False,
             error=str(e),
-            error_code=ErrorCode.INVALID_ARGS
+            error_code=ErrorCode.INVALID_ARGS,
         ).model_dump()
-
-    # Build role summary for initial response
-    role_assignments = {agent: role.id for agent, role in resolved_roles.items()}
-    role_names = {agent: role.name for agent, role in resolved_roles.items()}
-
-    # Create task and run council deliberation asynchronously
-    task = engine.create_task(
-        command="council_ask",
-        args={
-            "prompt": prompt.strip(),
-            "working_directory": working_directory,
-            "claude_opinion": claude_opinion,
-            "deliberate": deliberate,
-            "critique": critique,
-            "timeout": timeout,
-            "roles": roles,
-            "team": effective_team,
-        },
-        context=ctx,
-    )
-
-    task.async_task = asyncio.create_task(_run_council_deliberation(
-        task,
-        prompt=prompt.strip(),
-        working_directory=working_directory,
-        claude_opinion=claude_opinion,
-        deliberate=deliberate,
-        critique=critique,
-        timeout=timeout,
-        roles=roles,
-        team=effective_team,
-    ))
-
-    # Return with role information
-    response = TaskResponse(
-        success=True,
-        task_id=task.task_id,
-        status=task.status,
-        message="Council deliberation started. Use wait_for_task to get result.",
-    ).model_dump()
-
-    # Add role details to response
-    response["council"] = {
-        "agents": active_agents,
-        "excluded": list(excluded),
-        "team": effective_team,
-        "roles": role_assignments,
-        "role_names": role_names,
-        "include_claude_opinion": config.council.include_claude_opinion,
-    }
-
-    return response
+    except Exception as e:
+        return TaskResponse(
+            success=False,
+            error=f"Council deliberation failed: {e}",
+            error_code=ErrorCode.EXECUTION_FAILED,
+        ).model_dump()
 
 
 def main():

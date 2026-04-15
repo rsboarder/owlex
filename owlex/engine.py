@@ -269,9 +269,6 @@ class TaskEngine:
         self._log_timing(task)
         if not task.context:
             return
-        # Skip MCP notifications for council sub-tasks to prevent server disconnection
-        if task.council_id:
-            return
         prefix = "[owlex]"
         if task.status == "completed":
             preview = ""
@@ -317,7 +314,7 @@ class TaskEngine:
                     if task.process and task.process.returncode is None:
                         task.process.kill()
                     break
-                if task.context and not task.council_id:
+                if task.context:
                     now = time.monotonic()
                     if now - last_notify_time >= self._NOTIFICATION_MIN_INTERVAL:
                         last_notify_time = now

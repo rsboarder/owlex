@@ -140,6 +140,10 @@ class GeminiRunner(AgentRunner):
     def output_prefix(self) -> str:
         return "Gemini Output"
 
+    @property
+    def capacity_fail_patterns(self) -> list[str]:
+        return GEMINI_FAIL_PATTERNS
+
     def build_exec_command(
         self,
         prompt: str,

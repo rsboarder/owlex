@@ -7,12 +7,12 @@ import asyncio
 import os
 import shutil
 import sys
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
 from .config import config
-from .engine import engine, build_agent_response, AGENT_RUNNERS, cursor_runner
-from .agents.gemini import GEMINI_FAIL_PATTERNS
+from .engine import engine, build_agent_response, AGENT_RUNNERS
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
 from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver
 from .models import (
@@ -79,11 +79,19 @@ class Council:
     async def notify(self, message: str, level: str = "info", progress: float | None = None):
         """Send notification to MCP client if context supports it.
 
-        Disabled: council notifications were causing MCP server disconnection
-        under Claude Code. Notifications from individual agent tasks (via engine)
-        are also throttled. Council progress is logged to stderr only.
+        Safe because council_ask runs synchronously (blocking) — all notifications
+        happen during the active tool call, which MCP protocol supports.
         """
-        return
+        if not self.context:
+            return
+        handler = getattr(self.context, level, None)
+        if not callable(handler):
+            handler = getattr(self.context, 'info', None)
+        if handler:
+            try:
+                await handler(f"[council] {message}")
+            except Exception:
+                pass
 
     def build_participants(self, role_spec: RoleSpec = None) -> list[Participant]:
         """Build the complete participant list with runners, roles, and substitutions.
@@ -344,40 +352,66 @@ class Council:
                 self._engine._log_timing(task)
 
     @staticmethod
-    def _is_gemini_capacity_error(task) -> bool:
-        """Check if a failed task was due to Gemini capacity exhaustion."""
-        if not task.error:
+    def _is_capacity_error(task, runner) -> bool:
+        """Check if a failed task hit capacity/quota errors the runner defines."""
+        if not task.error or not runner.capacity_fail_patterns:
             return False
-        return any(p in task.error for p in GEMINI_FAIL_PATTERNS)
+        return any(p in task.error for p in runner.capacity_fail_patterns)
 
-    async def _run_gemini_fallback(
+    @staticmethod
+    def _get_fallback_config(agent_name: str):
+        """Get fallback (runner_name, model) for an agent, or None if not configured."""
+        # Currently only Gemini supports fallback — extend here for other agents
+        agent_configs = {
+            "gemini": lambda: (config.gemini.fallback_runner, config.gemini.fallback_model)
+                if config.gemini.fallback_model else None,
+        }
+        getter = agent_configs.get(agent_name)
+        return getter() if getter else None
+
+    async def _run_fallback(
         self,
         seat: str,
+        original_runner_name: str,
         prompt: str,
         working_directory: str | None,
         round_start: datetime,
     ):
-        """Retry a failed Gemini seat using Cursor CLI with the fallback model."""
-        fallback_model = config.gemini.fallback_model
+        """Retry a failed seat using its configured fallback runner."""
+        fallback = self._get_fallback_config(original_runner_name)
+        if not fallback:
+            return None, None
+        fallback_runner_name, fallback_model = fallback
+
+        try:
+            fallback_runner = AGENT_RUNNERS[Agent(fallback_runner_name)]
+        except (ValueError, KeyError):
+            self.log(f"Unknown fallback runner '{fallback_runner_name}' for {seat}")
+            return None, None
+
+        if not shutil.which(fallback_runner.cli_command):
+            self.log(f"Fallback runner '{fallback_runner.cli_command}' not available for {seat}")
+            return None, None
+
         task = self._engine.create_task(
             command=f"council_{seat}",
             args={"prompt": prompt, "working_directory": working_directory},
             context=self.context,
             council_id=self.council_id,
         )
-        self.log(f"Gemini capacity error — retrying {seat} via Cursor ({fallback_model})")
-        await self.notify(f"Gemini fallback: retrying via Cursor ({fallback_model})")
+        self.log(f"Capacity error on {seat} — retrying via {fallback_runner_name} ({fallback_model})")
+        await self.notify(f"Fallback: retrying {seat} via {fallback_runner_name}")
 
         await self._engine.run_agent(
-            task, cursor_runner, mode="exec", prompt=prompt,
+            task, fallback_runner, mode="exec", prompt=prompt,
             working_directory=working_directory,
             model_override=fallback_model,
         )
         elapsed = (datetime.now() - round_start).total_seconds()
         status = "completed" if task.status == "completed" else "failed"
-        self.log(f"Gemini fallback {status} ({elapsed:.1f}s)")
-        await self.notify(f"Gemini fallback {status} ({elapsed:.1f}s)")
-        return task
+        self.log(f"{seat} fallback {status} ({elapsed:.1f}s)")
+        await self.notify(f"{seat} fallback {status} ({elapsed:.1f}s)")
+        return task, fallback_runner_name
 
     # === Round execution ===
 
@@ -424,26 +458,26 @@ class Council:
         await self._wait_and_handle_timeouts(tasks, async_tasks, timeout)
         self._log_round_summary(1, tasks, round_start)
 
-        # Gemini fallback: retry failed Gemini seat via Cursor CLI
-        if config.gemini.fallback_model and shutil.which("agent"):
-            for p in participants:
-                if p.seat != "gemini" or p.is_substituted:
-                    continue
-                task = tasks.get(p.seat)
-                if task and task.status == "failed" and self._is_gemini_capacity_error(task):
-                    agent_prompt = inject_role_prefix(prompt, p.role)
-                    fallback_task = await self._run_gemini_fallback(
-                        p.seat, agent_prompt, working_directory, round_start,
-                    )
+        # Fallback: retry failed agents that hit capacity errors via configured fallback runner
+        participant_map = {p.seat: p for p in participants}
+        for p in participants:
+            if p.is_substituted:
+                continue
+            task = tasks.get(p.seat)
+            if task and task.status == "failed" and self._is_capacity_error(task, p.runner):
+                agent_prompt = inject_role_prefix(prompt, p.role)
+                fallback_task, fallback_runner_name = await self._run_fallback(
+                    p.seat, p.runner.name, agent_prompt, working_directory, round_start,
+                )
+                if fallback_task:
                     tasks[p.seat] = fallback_task
-                    # Mark participant as substituted so R2 uses exec mode
-                    p.is_substituted = True
-                    p.runner = cursor_runner
-                    p.donor = "cursor"
+                    fallback_runner = AGENT_RUNNERS[Agent(fallback_runner_name)]
+                    participant_map[p.seat] = replace(
+                        p, is_substituted=True, runner=fallback_runner, donor=fallback_runner_name,
+                    )
 
         # Parse session IDs in parallel for R2 resume
         r1_start_mtime = round_start.timestamp() - 1.0
-        participant_map = {p.seat: p for p in participants}
 
         async def parse_session(name: str) -> tuple[str, str | None]:
             p = participant_map[name]
@@ -568,25 +602,23 @@ class Council:
         await self._wait_and_handle_timeouts(tasks, async_tasks, timeout)
         self._log_round_summary(2, tasks, round_start)
 
-        # Gemini fallback for R2
-        if config.gemini.fallback_model and shutil.which("agent"):
-            for p in participants:
-                if p.seat != "gemini":
-                    continue
-                task = tasks.get(p.seat)
-                if task and task.status == "failed" and self._is_gemini_capacity_error(task):
-                    # Rebuild the full deliberation prompt for exec mode fallback
-                    fallback_prompt = build_deliberation_prompt_with_role(
-                        original_prompt=prompt, role=p.role, claude_answer=claude_content,
-                        critique=critique, include_original=True, **answer_kwargs,
-                    )
-                    fallback_task = await self._run_gemini_fallback(
-                        p.seat, fallback_prompt, working_directory, round_start,
-                    )
+        # Fallback: retry failed agents that hit capacity errors
+        for p in participants:
+            task = tasks.get(p.seat)
+            if task and task.status == "failed" and self._is_capacity_error(task, p.runner):
+                fallback_prompt = build_deliberation_prompt_with_role(
+                    original_prompt=prompt, role=p.role, claude_answer=claude_content,
+                    critique=critique, include_original=True, **answer_kwargs,
+                )
+                fallback_task, fallback_runner_name = await self._run_fallback(
+                    p.seat, p.runner.name, fallback_prompt, working_directory, round_start,
+                )
+                if fallback_task:
                     tasks[p.seat] = fallback_task
-                    p.is_substituted = True
-                    p.runner = cursor_runner
-                    p.donor = "cursor"
+                    fallback_runner = AGENT_RUNNERS[Agent(fallback_runner_name)]
+                    participant_map[p.seat] = replace(
+                        p, is_substituted=True, runner=fallback_runner, donor=fallback_runner_name,
+                    )
 
         await self.notify("Council Round 2 complete", progress=90)
 

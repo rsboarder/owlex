@@ -21,7 +21,8 @@ class GeminiConfig:
     """Configuration for Gemini CLI integration."""
     yolo_mode: bool = False
     clean_output: bool = True
-    fallback_model: str | None = None  # Cursor CLI model to use when Gemini hits capacity errors
+    fallback_runner: str = "cursor"  # Which runner to use for fallback
+    fallback_model: str | None = None  # Model override for fallback runner
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ def load_config() -> OwlexConfig:
     gemini = GeminiConfig(
         yolo_mode=os.environ.get("GEMINI_YOLO_MODE", "false").lower() == "true",
         clean_output=os.environ.get("GEMINI_CLEAN_OUTPUT", "true").lower() == "true",
+        fallback_runner=os.environ.get("GEMINI_FALLBACK_RUNNER", "cursor"),
         fallback_model=os.environ.get("GEMINI_FALLBACK_MODEL") or None,
     )
 

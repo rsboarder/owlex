@@ -39,6 +39,21 @@ class AgentRunner(ABC):
         """The CLI binary name used by this agent (for availability checks)."""
         pass
 
+    @property
+    def output_prefix(self) -> str:
+        """Output prefix this runner produces in task results (e.g. 'Codex Output')."""
+        return "Output"
+
+    @property
+    def is_configured(self) -> bool:
+        """Whether this runner has all required configuration (API keys, etc.)."""
+        return True
+
+    @property
+    def capacity_fail_patterns(self) -> list[str]:
+        """Patterns indicating capacity/quota exhaustion that should trigger fallback retry."""
+        return []
+
     @abstractmethod
     def build_exec_command(
         self,
