@@ -44,7 +44,8 @@ def _display_name(p: Participant) -> str:
     }
     name = custom.get(p.seat, p.seat.title())
     if p.is_substituted:
-        name = f"{name} (via {p.runner.cli_command})"
+        via = p.model_override or p.runner.cli_command
+        name = f"{name} (via {via})"
     return name
 
 
@@ -131,22 +132,41 @@ class Council:
                 role=resolved_roles[seat],
             ))
 
-        # Substituted seats — round-robin across donor pool
+        # Substituted seats — use model override if configured, else round-robin donors
+        sub_models = config.council.substitution_models or {}
         if unavailable:
             subs = []
             for i, seat in enumerate(unavailable):
-                if not donor_pool:
-                    self.log(f"No donors available for {seat}, skipping")
-                    continue
-                donor = donor_pool[i % len(donor_pool)]
-                participants.append(Participant(
-                    seat=seat,
-                    runner=AGENT_RUNNERS[Agent(donor)],
-                    is_substituted=True,
-                    donor=donor,
-                    role=resolved_roles[seat],
-                ))
-                subs.append(f"{seat}->{donor}")
+                model = sub_models.get(seat)
+                if model:
+                    # Model override requires cursor runner (only one with --model flag)
+                    cursor_agent = Agent("cursor")
+                    if cursor_agent.value not in [s for s in available]:
+                        self.log(f"Cannot use model override for {seat}: cursor not available")
+                        continue
+                    donor = "cursor"
+                    participants.append(Participant(
+                        seat=seat,
+                        runner=AGENT_RUNNERS[cursor_agent],
+                        is_substituted=True,
+                        donor=donor,
+                        model_override=model,
+                        role=resolved_roles[seat],
+                    ))
+                    subs.append(f"{seat}->{donor}({model})")
+                else:
+                    if not donor_pool:
+                        self.log(f"No donors available for {seat}, skipping")
+                        continue
+                    donor = donor_pool[i % len(donor_pool)]
+                    participants.append(Participant(
+                        seat=seat,
+                        runner=AGENT_RUNNERS[Agent(donor)],
+                        is_substituted=True,
+                        donor=donor,
+                        role=resolved_roles[seat],
+                    ))
+                    subs.append(f"{seat}->{donor}")
             if subs:
                 self.log(f"Substituting unavailable agents: {', '.join(subs)}")
 
@@ -442,10 +462,12 @@ class Council:
             kwargs = self._r1_kwargs(p.donor or p.seat)
             display = _display_name(p)
 
-            async def run(t=task, r=p.runner, pr=agent_prompt, d=display, kw=kwargs):
+            model = p.model_override
+
+            async def run(t=task, r=p.runner, pr=agent_prompt, d=display, kw=kwargs, mo=model):
                 await self._engine.run_agent(
                     t, r, mode="exec", prompt=pr,
-                    working_directory=working_directory, **kw,
+                    working_directory=working_directory, model_override=mo, **kw,
                 )
                 elapsed = (datetime.now() - round_start).total_seconds()
                 status = "completed" if t.status == "completed" else "failed"
@@ -577,20 +599,21 @@ class Council:
 
             kwargs = self._r2_kwargs(p.seat)
             display = _display_name(p)
+            model = p.model_override
 
             async def run_delib(
                 t=task, r=p.runner, s=session,
-                rp=resume_prompt, ep=exec_prompt, d=display, kw=kwargs,
+                rp=resume_prompt, ep=exec_prompt, d=display, kw=kwargs, mo=model,
             ):
                 if s:
                     await self._engine.run_agent(
                         t, r, mode="resume", session_ref=s,
-                        prompt=rp, working_directory=working_directory, **kw,
+                        prompt=rp, working_directory=working_directory, model_override=mo, **kw,
                     )
                 else:
                     await self._engine.run_agent(
                         t, r, mode="exec",
-                        prompt=ep, working_directory=working_directory, **kw,
+                        prompt=ep, working_directory=working_directory, model_override=mo, **kw,
                     )
                 elapsed = (datetime.now() - round_start).total_seconds()
                 self.log(f"{d} revised ({elapsed:.1f}s)")

@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .agents.base import AgentRunner
+
 
 class TaskStatus(str, Enum):
     """Task execution status."""
@@ -38,6 +40,22 @@ class Agent(str, Enum):
     CLAUDEOR = "claudeor"  # Claude Code via OpenRouter
     AICHAT = "aichat"  # aichat multi-provider CLI
     CURSOR = "cursor"  # Cursor Agent CLI
+
+
+@dataclass
+class Participant:
+    """A council seat with its assigned runner and role.
+
+    Decouples the logical seat (which determines the role and response slot)
+    from the physical runner (which CLI tool actually executes).
+    """
+    seat: str               # Logical identity (e.g. "opencode") — maps to CouncilRound field
+    runner: AgentRunner     # The CLI runner that executes (may differ from native if substituted)
+    is_substituted: bool    # True when runner differs from native
+    donor: str | None = None  # Seat name of the donor agent, if substituted
+    model_override: str | None = None  # Model to use instead of runner's default
+    # role is set after construction by Council.build_participants
+    role: Any = None        # RoleDefinition — typed as Any to avoid circular import
 
 
 @dataclass

@@ -64,6 +64,9 @@ class CouncilConfig:
     default_team: str | None = None  # Default team preset when no roles/team specified
     include_claude_opinion: bool = False  # Whether Claude should share its opinion by default
     substitution_donors: tuple[str, ...] = ("codex", "cursor")  # Preferred donors for unavailable agents
+    # Per-seat model overrides for substituted agents (seat:model pairs)
+    # When set, forces substitution through cursor runner (which supports --model)
+    substitution_models: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,11 +147,22 @@ def load_config() -> OwlexConfig:
     donors_raw = os.environ.get("COUNCIL_SUBSTITUTION_DONORS", "codex,cursor")
     substitution_donors = tuple(d.strip().lower() for d in donors_raw.split(",") if d.strip())
 
+    # Parse per-seat model overrides: "opencode:grok-4-20,claudeor:gemini-3.1-pro,aichat:gpt-5.4-mini"
+    sub_models_raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
+    substitution_models = None
+    if sub_models_raw.strip():
+        substitution_models = {}
+        for pair in sub_models_raw.split(","):
+            if ":" in pair:
+                seat, model = pair.strip().split(":", 1)
+                substitution_models[seat.strip().lower()] = model.strip()
+
     council = CouncilConfig(
         exclude_agents=exclude_agents,
         default_team=default_team,
         include_claude_opinion=include_claude_opinion,
         substitution_donors=substitution_donors,
+        substitution_models=substitution_models,
     )
 
     try:
