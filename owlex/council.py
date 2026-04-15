@@ -139,15 +139,14 @@ class Council:
             for i, seat in enumerate(unavailable):
                 model = sub_models.get(seat)
                 if model:
-                    # Model override requires cursor runner (only one with --model flag)
-                    cursor_agent = Agent("cursor")
-                    if cursor_agent.value not in [s for s in available]:
-                        self.log(f"Cannot use model override for {seat}: cursor not available")
+                    # Pick the first available donor that supports --model
+                    donor = donor_pool[0] if donor_pool else None
+                    if not donor:
+                        self.log(f"No donors available for {seat}, skipping")
                         continue
-                    donor = "cursor"
                     participants.append(Participant(
                         seat=seat,
-                        runner=AGENT_RUNNERS[cursor_agent],
+                        runner=AGENT_RUNNERS[Agent(donor)],
                         is_substituted=True,
                         donor=donor,
                         model_override=model,

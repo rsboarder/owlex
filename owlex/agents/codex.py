@@ -104,16 +104,23 @@ class CodexRunner(AgentRunner):
     def cli_command(self) -> str:
         return "codex"
 
+    @property
+    def output_prefix(self) -> str:
+        return "Codex Output"
+
     def build_exec_command(
         self,
         prompt: str,
         working_directory: str | None = None,
         enable_search: bool = False,
+        model_override: str | None = None,
         **kwargs,
     ) -> AgentCommand:
         """Build command for starting a new Codex session."""
         full_command = ["codex", "exec", "--skip-git-repo-check"]
 
+        if model_override:
+            full_command.extend(["--model", model_override])
         if working_directory:
             full_command.extend(["--cd", working_directory])
         if enable_search:
@@ -141,11 +148,14 @@ class CodexRunner(AgentRunner):
         prompt: str,
         working_directory: str | None = None,
         enable_search: bool = False,
+        model_override: str | None = None,
         **kwargs,
     ) -> AgentCommand:
         """Build command for resuming an existing Codex session."""
         full_command = ["codex", "exec", "--skip-git-repo-check"]
 
+        if model_override:
+            full_command.extend(["--model", model_override])
         if working_directory:
             full_command.extend(["--cd", working_directory])
         if enable_search:
