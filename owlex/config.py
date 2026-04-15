@@ -21,6 +21,7 @@ class GeminiConfig:
     """Configuration for Gemini CLI integration."""
     yolo_mode: bool = False
     clean_output: bool = True
+    fallback_model: str | None = None  # Cursor CLI model to use when Gemini hits capacity errors
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class CouncilConfig:
     exclude_agents: frozenset[str] = frozenset()  # Agents to exclude from council
     default_team: str | None = None  # Default team preset when no roles/team specified
     include_claude_opinion: bool = False  # Whether Claude should share its opinion by default
+    substitution_donors: tuple[str, ...] = ("codex", "cursor")  # Preferred donors for unavailable agents
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ def load_config() -> OwlexConfig:
     gemini = GeminiConfig(
         yolo_mode=os.environ.get("GEMINI_YOLO_MODE", "false").lower() == "true",
         clean_output=os.environ.get("GEMINI_CLEAN_OUTPUT", "true").lower() == "true",
+        fallback_model=os.environ.get("GEMINI_FALLBACK_MODEL") or None,
     )
 
     opencode = OpenCodeConfig(
@@ -136,10 +139,14 @@ def load_config() -> OwlexConfig:
     default_team = os.environ.get("COUNCIL_DEFAULT_TEAM", "").strip() or None
     # Parse Claude opinion setting
     include_claude_opinion = os.environ.get("COUNCIL_CLAUDE_OPINION", "false").lower() == "true"
+    donors_raw = os.environ.get("COUNCIL_SUBSTITUTION_DONORS", "codex,cursor")
+    substitution_donors = tuple(d.strip().lower() for d in donors_raw.split(",") if d.strip())
+
     council = CouncilConfig(
         exclude_agents=exclude_agents,
         default_team=default_team,
         include_claude_opinion=include_claude_opinion,
+        substitution_donors=substitution_donors,
     )
 
     try:

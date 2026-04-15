@@ -80,19 +80,25 @@ class CursorRunner(AgentRunner):
     def cli_command(self) -> str:
         return "agent"
 
+    @property
+    def output_prefix(self) -> str:
+        return "Cursor Output"
+
     def build_exec_command(
         self,
         prompt: str,
         working_directory: str | None = None,
         enable_search: bool = False,
+        model_override: str | None = None,
         **kwargs,
     ) -> AgentCommand:
         """Build command for starting a new Cursor Agent session."""
         full_command = ["agent", "--print", "--output-format", "text", "--trust"]
 
-        # Model selection from config
-        if config.cursor.model:
-            full_command.extend(["--model", config.cursor.model])
+        # Model selection: explicit override > config > default
+        model = model_override or config.cursor.model
+        if model:
+            full_command.extend(["--model", model])
 
         # Force mode (auto-approve commands)
         if config.cursor.force_mode:

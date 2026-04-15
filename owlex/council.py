@@ -11,7 +11,8 @@ from datetime import datetime
 from typing import Any
 
 from .config import config
-from .engine import engine, build_agent_response, AGENT_RUNNERS
+from .engine import engine, build_agent_response, AGENT_RUNNERS, cursor_runner
+from .agents.gemini import GEMINI_FAIL_PATTERNS
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
 from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver
 from .models import (
@@ -22,7 +23,11 @@ from .models import (
     CouncilResponse,
     CouncilRound,
     CouncilMetadata,
+    Participant,
 )
+
+
+ALL_SEATS = ("codex", "gemini", "opencode", "claudeor", "aichat", "cursor")
 
 
 def _log(msg: str):
@@ -30,14 +35,17 @@ def _log(msg: str):
     print(msg, file=sys.stderr, flush=True)
 
 
-def _display_name(agent_name: str) -> str:
-    """Get display name for an agent, using custom model names where configured."""
+def _display_name(p: Participant) -> str:
+    """Get display name for a participant, showing substitution if applicable."""
     custom = {
         "claudeor": config.claudeor.model or "Claude/OpenRouter",
         "aichat": config.aichat.model or "AiChat",
         "cursor": config.cursor.model or "Cursor",
     }
-    return custom.get(agent_name, agent_name.title())
+    name = custom.get(p.seat, p.seat.title())
+    if p.is_substituted:
+        name = f"{name} (via {p.runner.cli_command})"
+    return name
 
 
 class Council:
@@ -69,29 +77,72 @@ class Council:
         _log(msg)
 
     async def notify(self, message: str, level: str = "info", progress: float | None = None):
-        """Send notification to MCP client if context supports it."""
-        if not self.context:
-            return
-        try:
-            session = getattr(self.context, 'session', None)
-            if not session:
-                return
+        """Send notification to MCP client if context supports it.
 
-            if hasattr(session, 'send_progress_notification') and progress is not None:
-                try:
-                    await session.send_progress_notification(
-                        progress_token="owlex-council",
-                        progress=progress,
-                        total=100.0,
-                        message=message,
-                    )
-                except Exception:
-                    pass
+        Disabled: council notifications were causing MCP server disconnection
+        under Claude Code. Notifications from individual agent tasks (via engine)
+        are also throttled. Council progress is logged to stderr only.
+        """
+        return
 
-            if hasattr(session, 'send_log_message'):
-                await session.send_log_message(level=level, data=message, logger="owlex")
-        except Exception:
-            pass
+    def build_participants(self, role_spec: RoleSpec = None) -> list[Participant]:
+        """Build the complete participant list with runners, roles, and substitutions.
+
+        This is the single source of truth for seat-to-runner mapping.
+        Can be called without starting a deliberation (e.g., for preview in server.py).
+        """
+        excluded = config.council.exclude_agents
+        seats = [s for s in ALL_SEATS if s not in excluded]
+
+        # Resolve roles for all seats
+        resolved_roles = self._resolver.resolve(role_spec, seats)
+
+        # Partition by CLI availability and configuration
+        available = []
+        unavailable = []
+        for seat in seats:
+            runner = AGENT_RUNNERS[Agent(seat)]
+            if shutil.which(runner.cli_command) and runner.is_configured:
+                available.append(seat)
+            else:
+                unavailable.append(seat)
+
+        # Build donor pool: only configured donors that are actually available
+        donor_pool = [s for s in config.council.substitution_donors if s in available]
+        if not donor_pool and available:
+            donor_pool = available  # fallback: use all available
+
+        participants = []
+
+        # Native seats
+        for seat in available:
+            participants.append(Participant(
+                seat=seat,
+                runner=AGENT_RUNNERS[Agent(seat)],
+                is_substituted=False,
+                role=resolved_roles[seat],
+            ))
+
+        # Substituted seats — round-robin across donor pool
+        if unavailable:
+            subs = []
+            for i, seat in enumerate(unavailable):
+                if not donor_pool:
+                    self.log(f"No donors available for {seat}, skipping")
+                    continue
+                donor = donor_pool[i % len(donor_pool)]
+                participants.append(Participant(
+                    seat=seat,
+                    runner=AGENT_RUNNERS[Agent(donor)],
+                    is_substituted=True,
+                    donor=donor,
+                    role=resolved_roles[seat],
+                ))
+                subs.append(f"{seat}->{donor}")
+            if subs:
+                self.log(f"Substituting unavailable agents: {', '.join(subs)}")
+
+        return participants
 
     async def deliberate(
         self,
@@ -137,17 +188,18 @@ class Council:
         if working_directory is None:
             working_directory = os.getcwd()
 
-        # Build active agent list
-        active_agents = self._resolve_active_agents()
-
-        # Resolve roles
+        # Build participants (single source of truth for seats, runners, roles)
         role_spec = roles if roles is not None else team
-        resolved_roles = self._resolver.resolve(role_spec, active_agents)
+        participants = self.build_participants(role_spec)
 
         council_start = datetime.now()
 
         # Log role assignments
-        role_msgs = [f"{agent.title()}: {role.name}" for agent, role in resolved_roles.items() if role.id != RoleId.NEUTRAL.value]
+        role_msgs = [
+            f"{_display_name(p)}: {p.role.name}"
+            for p in participants
+            if p.role.id != RoleId.NEUTRAL.value
+        ]
         if role_msgs:
             roles_summary = ", ".join(role_msgs)
             self.log(f"Roles assigned: {roles_summary}")
@@ -157,10 +209,11 @@ class Council:
         if claude_opinion and claude_opinion.strip():
             self.log(f"Claude's opinion received ({len(claude_opinion)} chars)")
 
-        self.log(f"Round 1: querying {', '.join(a.title() for a in active_agents)}...")
-        await self.notify(f"Council Round 1: querying {', '.join(a.title() for a in active_agents)}", progress=20)
+        seat_names = [p.seat.title() for p in participants]
+        self.log(f"Round 1: querying {', '.join(seat_names)}...")
+        await self.notify(f"Council Round 1: querying {', '.join(seat_names)}", progress=20)
 
-        round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, resolved_roles, active_agents)
+        round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, participants)
         await self.notify("Council Round 1 complete", progress=50)
 
         # === Round 2 ===
@@ -174,8 +227,7 @@ class Council:
                 claude_opinion=claude_opinion,
                 critique=critique,
                 timeout=effective_timeout,
-                roles=resolved_roles,
-                active_agents=active_agents,
+                participants=participants,
             )
 
         # Build response
@@ -192,6 +244,8 @@ class Council:
         timing = self._collect_timing(round_1, 1) + (self._collect_timing(round_2, 2) if round_2 else [])
         timing.sort(key=lambda t: t.duration_seconds, reverse=True)
         slowest = timing[0].agent if timing else None
+
+        resolved_roles = {p.seat: p.role for p in participants}
 
         return CouncilResponse(
             prompt=prompt,
@@ -213,30 +267,10 @@ class Council:
 
     # === Helper methods ===
 
-    def _resolve_active_agents(self) -> list[str]:
-        """Build list of active agents after exclusion and availability checks."""
-        excluded = config.council.exclude_agents
-        all_agents = ["codex", "gemini", "opencode"]
-        if config.claudeor.api_key:
-            all_agents.append("claudeor")
-        all_agents.append("aichat")
-        all_agents.append("cursor")
-        active = [a for a in all_agents if a not in excluded]
-
-        # Pre-flight: skip agents whose CLI isn't installed
-        unavailable = [
-            a for a in active
-            if not shutil.which(AGENT_RUNNERS[Agent(a)].cli_command)
-        ]
-        if unavailable:
-            active = [a for a in active if a not in unavailable]
-            self.log(f"Skipping unavailable agents: {', '.join(unavailable)}")
-        return active
-
     @staticmethod
-    def _r1_kwargs(agent_name: str) -> dict:
-        """Agent-specific kwargs for R1 execution."""
-        if agent_name == "codex":
+    def _r1_kwargs(runner_seat: str) -> dict:
+        """Agent-specific kwargs for R1 execution, based on the runner's native seat."""
+        if runner_seat == "codex":
             return {"enable_search": config.codex.enable_search}
         return {}
 
@@ -309,6 +343,42 @@ class Council:
                 await self._engine.kill_task_subprocess(task)
                 self._engine._log_timing(task)
 
+    @staticmethod
+    def _is_gemini_capacity_error(task) -> bool:
+        """Check if a failed task was due to Gemini capacity exhaustion."""
+        if not task.error:
+            return False
+        return any(p in task.error for p in GEMINI_FAIL_PATTERNS)
+
+    async def _run_gemini_fallback(
+        self,
+        seat: str,
+        prompt: str,
+        working_directory: str | None,
+        round_start: datetime,
+    ):
+        """Retry a failed Gemini seat using Cursor CLI with the fallback model."""
+        fallback_model = config.gemini.fallback_model
+        task = self._engine.create_task(
+            command=f"council_{seat}",
+            args={"prompt": prompt, "working_directory": working_directory},
+            context=self.context,
+            council_id=self.council_id,
+        )
+        self.log(f"Gemini capacity error — retrying {seat} via Cursor ({fallback_model})")
+        await self.notify(f"Gemini fallback: retrying via Cursor ({fallback_model})")
+
+        await self._engine.run_agent(
+            task, cursor_runner, mode="exec", prompt=prompt,
+            working_directory=working_directory,
+            model_override=fallback_model,
+        )
+        elapsed = (datetime.now() - round_start).total_seconds()
+        status = "completed" if task.status == "completed" else "failed"
+        self.log(f"Gemini fallback {status} ({elapsed:.1f}s)")
+        await self.notify(f"Gemini fallback {status} ({elapsed:.1f}s)")
+        return task
+
     # === Round execution ===
 
     async def _run_round_1(
@@ -316,34 +386,31 @@ class Council:
         prompt: str,
         working_directory: str | None,
         timeout: int | None,
-        roles: dict[str, RoleDefinition],
-        active_agents: list[str],
+        participants: list[Participant],
     ) -> CouncilRound:
         """Run the first round of parallel queries."""
         round_start = datetime.now()
         tasks = {}
         async_tasks = []
 
-        for agent_name in active_agents:
-            agent_enum = Agent(agent_name)
-            runner = AGENT_RUNNERS[agent_enum]
-            role = roles.get(agent_name)
-            agent_prompt = inject_role_prefix(prompt, role)
+        for p in participants:
+            agent_prompt = inject_role_prefix(prompt, p.role)
 
             task = self._engine.create_task(
-                command=f"council_{agent_enum.value}",
+                command=f"council_{p.seat}",
                 args={"prompt": agent_prompt, "working_directory": working_directory},
                 context=self.context,
                 council_id=self.council_id,
             )
-            tasks[agent_name] = task
+            tasks[p.seat] = task
 
-            kwargs = self._r1_kwargs(agent_name)
-            display = _display_name(agent_name)
+            # Use the runner's native seat for kwargs (e.g. codex search)
+            kwargs = self._r1_kwargs(p.donor or p.seat)
+            display = _display_name(p)
 
-            async def run(t=task, r=runner, p=agent_prompt, d=display, kw=kwargs):
+            async def run(t=task, r=p.runner, pr=agent_prompt, d=display, kw=kwargs):
                 await self._engine.run_agent(
-                    t, r, mode="exec", prompt=p,
+                    t, r, mode="exec", prompt=pr,
                     working_directory=working_directory, **kw,
                 )
                 elapsed = (datetime.now() - round_start).total_seconds()
@@ -357,17 +424,38 @@ class Council:
         await self._wait_and_handle_timeouts(tasks, async_tasks, timeout)
         self._log_round_summary(1, tasks, round_start)
 
+        # Gemini fallback: retry failed Gemini seat via Cursor CLI
+        if config.gemini.fallback_model and shutil.which("agent"):
+            for p in participants:
+                if p.seat != "gemini" or p.is_substituted:
+                    continue
+                task = tasks.get(p.seat)
+                if task and task.status == "failed" and self._is_gemini_capacity_error(task):
+                    agent_prompt = inject_role_prefix(prompt, p.role)
+                    fallback_task = await self._run_gemini_fallback(
+                        p.seat, agent_prompt, working_directory, round_start,
+                    )
+                    tasks[p.seat] = fallback_task
+                    # Mark participant as substituted so R2 uses exec mode
+                    p.is_substituted = True
+                    p.runner = cursor_runner
+                    p.donor = "cursor"
+
         # Parse session IDs in parallel for R2 resume
         r1_start_mtime = round_start.timestamp() - 1.0
+        participant_map = {p.seat: p for p in participants}
 
         async def parse_session(name: str) -> tuple[str, str | None]:
+            p = participant_map[name]
             if name not in tasks or tasks[name].status != "completed":
                 return name, None
-            runner = AGENT_RUNNERS[Agent(name)]
-            session = await runner.parse_session_id(
+            # Substituted agents can't reliably resume (shared session stores)
+            if p.is_substituted:
+                return name, None
+            session = await p.runner.parse_session_id(
                 "", since_mtime=r1_start_mtime, working_directory=working_directory,
             )
-            if session and not runner.validate_session_id(session):
+            if session and not p.runner.validate_session_id(session):
                 self.log(f"{name.title()} session ID validation failed: {session}")
                 return name, None
             if not session:
@@ -377,10 +465,16 @@ class Council:
         session_results = await asyncio.gather(*[parse_session(n) for n in tasks])
         sessions = dict(session_results)
 
-        round_data = {
-            name: build_agent_response(task, Agent(name), session_id=sessions.get(name))
-            for name, task in tasks.items()
-        }
+        round_data = {}
+        for name, task in tasks.items():
+            p = participant_map[name]
+            # Use the runner's actual prefix for substituted seats
+            prefix = p.runner.output_prefix if p.is_substituted else None
+            round_data[name] = build_agent_response(
+                task, Agent(name),
+                session_id=sessions.get(name),
+                output_prefix_override=prefix,
+            )
         return CouncilRound(**round_data)
 
     async def _run_round_2(
@@ -391,11 +485,11 @@ class Council:
         claude_opinion: str | None,
         critique: bool,
         timeout: int | None,
-        roles: dict[str, RoleDefinition],
-        active_agents: list[str],
+        participants: list[Participant],
     ) -> CouncilRound:
         """Run the second round of deliberation."""
         self.log("Round 2: deliberation phase...")
+        participant_map = {p.seat: p for p in participants}
 
         # Skip agents that failed in R1
         r1_failed = set()
@@ -423,37 +517,35 @@ class Council:
         tasks = {}
         async_tasks = []
 
-        for agent_name in active_agents:
-            if agent_name in r1_failed:
+        for p in participants:
+            if p.seat in r1_failed:
                 continue
 
-            agent_enum = Agent(agent_name)
-            runner = AGENT_RUNNERS[agent_enum]
-            role = roles.get(agent_name)
-            session = sessions.get(agent_name)
+            # Substituted agents can't resume — multiple instances may share session store
+            session = None if p.is_substituted else sessions.get(p.seat)
 
             resume_prompt = build_deliberation_prompt_with_role(
-                original_prompt=prompt, role=role, claude_answer=claude_content,
+                original_prompt=prompt, role=p.role, claude_answer=claude_content,
                 critique=critique, include_original=False, **answer_kwargs,
             )
             exec_prompt = build_deliberation_prompt_with_role(
-                original_prompt=prompt, role=role, claude_answer=claude_content,
+                original_prompt=prompt, role=p.role, claude_answer=claude_content,
                 critique=critique, include_original=True, **answer_kwargs,
             )
 
             task = self._engine.create_task(
-                command=f"council_{agent_enum.value}_delib",
+                command=f"council_{p.seat}_delib",
                 args={"prompt": resume_prompt, "working_directory": working_directory},
                 context=self.context,
                 council_id=self.council_id,
             )
-            tasks[agent_name] = task
+            tasks[p.seat] = task
 
-            kwargs = self._r2_kwargs(agent_name)
-            display = _display_name(agent_name)
+            kwargs = self._r2_kwargs(p.seat)
+            display = _display_name(p)
 
             async def run_delib(
-                t=task, r=runner, s=session,
+                t=task, r=p.runner, s=session,
                 rp=resume_prompt, ep=exec_prompt, d=display, kw=kwargs,
             ):
                 if s:
@@ -476,10 +568,34 @@ class Council:
         await self._wait_and_handle_timeouts(tasks, async_tasks, timeout)
         self._log_round_summary(2, tasks, round_start)
 
+        # Gemini fallback for R2
+        if config.gemini.fallback_model and shutil.which("agent"):
+            for p in participants:
+                if p.seat != "gemini":
+                    continue
+                task = tasks.get(p.seat)
+                if task and task.status == "failed" and self._is_gemini_capacity_error(task):
+                    # Rebuild the full deliberation prompt for exec mode fallback
+                    fallback_prompt = build_deliberation_prompt_with_role(
+                        original_prompt=prompt, role=p.role, claude_answer=claude_content,
+                        critique=critique, include_original=True, **answer_kwargs,
+                    )
+                    fallback_task = await self._run_gemini_fallback(
+                        p.seat, fallback_prompt, working_directory, round_start,
+                    )
+                    tasks[p.seat] = fallback_task
+                    p.is_substituted = True
+                    p.runner = cursor_runner
+                    p.donor = "cursor"
+
         await self.notify("Council Round 2 complete", progress=90)
 
-        round_data = {
-            name: build_agent_response(task, Agent(name))
-            for name, task in tasks.items()
-        }
+        round_data = {}
+        for name, task in tasks.items():
+            p = participant_map[name]
+            prefix = p.runner.output_prefix if p.is_substituted else None
+            round_data[name] = build_agent_response(
+                task, Agent(name),
+                output_prefix_override=prefix,
+            )
         return CouncilRound(**round_data)

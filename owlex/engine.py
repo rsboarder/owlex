@@ -32,20 +32,30 @@ def build_agent_response(
     task: Task,
     agent: Agent | str,
     session_id: str | None = None,
+    output_prefix_override: str | None = None,
 ) -> AgentResponse:
-    """Build structured response for an agent."""
+    """Build structured response for an agent.
+
+    Args:
+        output_prefix_override: If set, use this prefix for content extraction
+            instead of the default seat-based lookup. Used when a substituted
+            runner produces a different prefix than the seat's native runner.
+    """
     # Normalize to string for backward compatibility
     agent_name = agent.value if isinstance(agent, Agent) else agent
 
-    prefix_map = {
-        Agent.CODEX.value: "Codex Output:\n\n",
-        Agent.GEMINI.value: "Gemini Output:\n\n",
-        Agent.OPENCODE.value: "OpenCode Output:\n\n",
-        Agent.CLAUDEOR.value: "Claude (OpenRouter) Output:\n\n",
-        Agent.AICHAT.value: "AiChat Output:\n\n",
-        Agent.CURSOR.value: "Cursor Output:\n\n",
-    }
-    prefix = prefix_map.get(agent_name, "")
+    if output_prefix_override:
+        prefix = f"{output_prefix_override}:\n\n"
+    else:
+        prefix_map = {
+            Agent.CODEX.value: "Codex Output:\n\n",
+            Agent.GEMINI.value: "Gemini Output:\n\n",
+            Agent.OPENCODE.value: "OpenCode Output:\n\n",
+            Agent.CLAUDEOR.value: "Claude (OpenRouter) Output:\n\n",
+            Agent.AICHAT.value: "AiChat Output:\n\n",
+            Agent.CURSOR.value: "Cursor Output:\n\n",
+        }
+        prefix = prefix_map.get(agent_name, "")
 
     return AgentResponse(
         agent=agent_name,
@@ -259,6 +269,9 @@ class TaskEngine:
         self._log_timing(task)
         if not task.context:
             return
+        # Skip MCP notifications for council sub-tasks to prevent server disconnection
+        if task.council_id:
+            return
         prefix = "[owlex]"
         if task.status == "completed":
             preview = ""
@@ -269,6 +282,9 @@ class TaskEngine:
         elif task.status == "failed":
             error_preview = (task.error or "")[:100]
             await self._send_notification(task, "error", f"{prefix} Task {task.task_id[:8]} failed: {error_preview}")
+
+    # Notification throttle: max 1 notification per second per stream reader
+    _NOTIFICATION_MIN_INTERVAL = 1.0
 
     async def _read_stream_lines(
         self,
@@ -281,8 +297,13 @@ class TaskEngine:
 
         If fail_patterns is provided and a line matches, the process is killed immediately.
         Used to detect fatal errors like quota exhaustion without waiting for timeout.
+
+        Notifications are throttled to prevent MCP client disconnection from
+        notification floods (e.g., Gemini CLI 429 retry output).
         """
         lines = []
+        last_notify_time = 0.0
+        import time
         while True:
             try:
                 line = await stream.readline()
@@ -296,11 +317,14 @@ class TaskEngine:
                     if task.process and task.process.returncode is None:
                         task.process.kill()
                     break
-                if task.context:
-                    try:
-                        await task.context.info(f"[{task.task_id[:8]}] {decoded}")
-                    except Exception:
-                        pass
+                if task.context and not task.council_id:
+                    now = time.monotonic()
+                    if now - last_notify_time >= self._NOTIFICATION_MIN_INTERVAL:
+                        last_notify_time = now
+                        try:
+                            await task.context.info(f"[{task.task_id[:8]}] {decoded}")
+                        except Exception:
+                            pass
             except Exception:
                 break
         return '\n'.join(lines)
@@ -523,6 +547,7 @@ class TaskEngine:
         session_ref: str | None = None,
         enable_search: bool = False,
         timeout: int | None = None,
+        **kwargs,
     ):
         """
         Run an agent using the unified polymorphic pattern.
@@ -536,12 +561,14 @@ class TaskEngine:
             session_ref: Session reference (required for resume mode)
             enable_search: Enable web search (Codex only)
             timeout: Timeout in seconds
+            **kwargs: Additional arguments passed to build_exec_command/build_resume_command
         """
         if mode == "exec":
             agent_cmd = runner.build_exec_command(
                 prompt=prompt,
                 working_directory=working_directory,
                 enable_search=enable_search,
+                **kwargs,
             )
         elif mode == "resume":
             if session_ref is None:
@@ -551,6 +578,7 @@ class TaskEngine:
                 prompt=prompt,
                 working_directory=working_directory,
                 enable_search=enable_search,
+                **kwargs,
             )
         else:
             raise ValueError(f"Invalid mode: {mode}. Must be 'exec' or 'resume'")

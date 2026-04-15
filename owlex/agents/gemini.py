@@ -15,6 +15,7 @@ from .base import AgentRunner, AgentCommand
 # Patterns in stderr that indicate fatal errors — kill process immediately
 GEMINI_FAIL_PATTERNS = [
     "QUOTA_EXHAUSTED",
+    "MODEL_CAPACITY_EXHAUSTED",
     "You have exhausted your capacity",
 ]
 
@@ -134,6 +135,10 @@ class GeminiRunner(AgentRunner):
     @property
     def cli_command(self) -> str:
         return "gemini"
+
+    @property
+    def output_prefix(self) -> str:
+        return "Gemini Output"
 
     def build_exec_command(
         self,
