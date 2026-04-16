@@ -1,11 +1,15 @@
 """
 LLM-as-judge scoring for council eval.
-Uses claude CLI in print mode for scoring — no API key needed.
+Uses anthropic SDK if ANTHROPIC_API_KEY is set, otherwise falls back to claude CLI.
+The claude CLI approach only works when run from a terminal (not from within Claude Code).
 """
 
 import asyncio
 import json
+import os
 import sys
+
+JUDGE_MODEL = "claude-sonnet-4-20250514"
 
 JUDGE_PROMPT = """\
 You are evaluating an AI agent's response to a software engineering question about a real codebase.
@@ -31,18 +35,74 @@ Respond with ONLY valid JSON, no other text:
 {{"relevance": <1-5>, "specificity": <1-5>, "actionability": <1-5>, "depth": <1-5>, "accuracy": <1-5>, "reasoning": "<one sentence explaining your scores>"}}
 """
 
-JSON_SCHEMA = json.dumps({
-    "type": "object",
-    "properties": {
-        "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
-        "specificity": {"type": "integer", "minimum": 1, "maximum": 5},
-        "actionability": {"type": "integer", "minimum": 1, "maximum": 5},
-        "depth": {"type": "integer", "minimum": 1, "maximum": 5},
-        "accuracy": {"type": "integer", "minimum": 1, "maximum": 5},
-        "reasoning": {"type": "string"},
-    },
-    "required": ["relevance", "specificity", "actionability", "depth", "accuracy", "reasoning"],
-})
+
+def _parse_json_scores(text: str) -> dict | None:
+    """Try to extract JSON scores from LLM output."""
+    text = text.strip()
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("{") and "relevance" in line:
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+    if "```" in text:
+        try:
+            block = text.split("```")[1]
+            if block.startswith("json"):
+                block = block[4:]
+            return json.loads(block.strip())
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+    return None
+
+
+async def _score_via_sdk(prompt: str) -> dict:
+    """Score using anthropic SDK (requires ANTHROPIC_API_KEY)."""
+    import anthropic
+    client = anthropic.Anthropic()
+    message = client.messages.create(
+        model=JUDGE_MODEL,
+        max_tokens=256,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = message.content[0].text
+    result = _parse_json_scores(text)
+    if result:
+        return result
+    return _default_scores(f"unparseable SDK output: {text[:100]}")
+
+
+async def _score_via_cli(prompt: str, timeout: int = 60) -> dict:
+    """Score using claude CLI (requires OAuth login, won't work inside Claude Code)."""
+    proc = await asyncio.create_subprocess_exec(
+        "claude", "-p", "--no-session-persistence",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(input=prompt.encode()),
+        timeout=timeout,
+    )
+
+    if proc.returncode != 0:
+        err = stderr.decode()[:200]
+        return _default_scores(f"CLI failed: {err}")
+
+    text = stdout.decode()
+    result = _parse_json_scores(text)
+    if result:
+        return result
+    return _default_scores(f"unparseable CLI output: {text[:100]}")
 
 
 async def score_response(
@@ -51,59 +111,20 @@ async def score_response(
     expected_topics: list[str],
     timeout: int = 60,
 ) -> dict:
-    """Score a single agent response using claude CLI as judge."""
+    """Score a single agent response. Uses SDK if API key available, else CLI."""
     prompt = JUDGE_PROMPT.format(
         question=question,
-        response=response[:8000],  # Cap to avoid overwhelming the judge
+        response=response[:8000],
         expected_topics=", ".join(expected_topics),
     )
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "claude", "-p",
-            "--output-format", "json",
-            "--json-schema", JSON_SCHEMA,
-            "--no-session-persistence",
-            "--tools", "",  # No tools needed for judging
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode()),
-            timeout=timeout,
-        )
-
-        if proc.returncode != 0:
-            print(f"  Judge failed: {stderr.decode()[:200]}", file=sys.stderr)
-            return _default_scores("judge process failed")
-
-        output = stdout.decode().strip()
-
-        # claude --output-format json wraps result in {"type":"result","result":"..."}
-        try:
-            wrapper = json.loads(output)
-            if isinstance(wrapper, dict) and "result" in wrapper:
-                result_text = wrapper["result"]
-                # The result might be a JSON string or already parsed
-                if isinstance(result_text, str):
-                    return json.loads(result_text)
-                return result_text
-            return wrapper
-        except (json.JSONDecodeError, TypeError):
-            # Try to extract JSON from the raw output
-            for line in output.split("\n"):
-                line = line.strip()
-                if line.startswith("{") and "relevance" in line:
-                    return json.loads(line)
-            print(f"  Judge output not parseable: {output[:200]}", file=sys.stderr)
-            return _default_scores("unparseable output")
-
-    except asyncio.TimeoutError:
-        return _default_scores("judge timeout")
-    except FileNotFoundError:
-        return _default_scores("claude CLI not found")
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            return await _score_via_sdk(prompt)
+        else:
+            return await _score_via_cli(prompt, timeout)
     except Exception as e:
+        print(f"  Judge error: {e}", file=sys.stderr)
         return _default_scores(str(e))
 
 
@@ -123,7 +144,6 @@ def compute_consistency(agent_responses: dict[str, str]) -> float:
     if len(agent_responses) < 2:
         return 5.0
 
-    # Extract key terms from each response (words > 5 chars, lowered)
     term_sets = []
     for content in agent_responses.values():
         if not content:
@@ -138,7 +158,6 @@ def compute_consistency(agent_responses: dict[str, str]) -> float:
     if len(term_sets) < 2:
         return 3.0
 
-    # Compute pairwise Jaccard similarity
     similarities = []
     for i in range(len(term_sets)):
         for j in range(i + 1, len(term_sets)):
@@ -148,5 +167,4 @@ def compute_consistency(agent_responses: dict[str, str]) -> float:
                 similarities.append(intersection / union)
 
     avg_similarity = sum(similarities) / len(similarities) if similarities else 0
-    # Map 0-1 similarity to 1-5 scale
     return round(1 + avg_similarity * 4, 1)
