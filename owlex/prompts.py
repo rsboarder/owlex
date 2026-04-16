@@ -124,19 +124,21 @@ def build_deliberation_prompt(
 
 # === Role Injection Functions ===
 
-def inject_role_prefix(prompt: str, role: RoleDefinition | None) -> str:
+def inject_role_prefix(prompt: str, role: RoleDefinition | None, context: str | None = None) -> str:
     """
-    Inject council system instruction and role prefix into a prompt for Round 1.
+    Inject council system instruction, project context, and role prefix into a prompt for Round 1.
 
     Args:
         prompt: The original prompt
         role: The role definition (None or neutral role = no injection)
+        context: Optional project context (CLAUDE.md, git diff) to inject
 
     Returns:
-        Prompt with system instruction and role prefix prepended
+        Prompt with system instruction, context, and role prefix prepended
     """
     role_prefix = role.round_1_prefix if role and role.round_1_prefix else ""
-    return f"{COUNCIL_SYSTEM_INSTRUCTION}{role_prefix}{prompt}"
+    context_block = f"PROJECT CONTEXT:\n{context}\n\n" if context else ""
+    return f"{COUNCIL_SYSTEM_INSTRUCTION}{context_block}{role_prefix}{prompt}"
 
 
 def build_deliberation_prompt_with_role(

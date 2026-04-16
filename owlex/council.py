@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from .config import config
+from .context import gather_context
 from .engine import engine, build_agent_response, AGENT_RUNNERS
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
 from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver
@@ -233,6 +234,13 @@ class Council:
             self.log(f"Roles assigned: {roles_summary}")
             await self.notify(f"Council roles: {roles_summary}", progress=10)
 
+        # === Gather shared context ===
+        project_context = await gather_context(working_directory)
+        if project_context:
+            self.log(f"Context gathered: {len(project_context)} chars")
+        else:
+            self.log("No project context found")
+
         # === Round 1 ===
         if claude_opinion and claude_opinion.strip():
             self.log(f"Claude's opinion received ({len(claude_opinion)} chars)")
@@ -241,7 +249,7 @@ class Council:
         self.log(f"Round 1: querying {', '.join(seat_names)}...")
         await self.notify(f"Council Round 1: querying {', '.join(seat_names)}", progress=20)
 
-        round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, participants)
+        round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, participants, project_context)
         await self.notify("Council Round 1 complete", progress=50)
 
         # === Round 2 ===
@@ -448,6 +456,7 @@ class Council:
         working_directory: str | None,
         timeout: int | None,
         participants: list[Participant],
+        project_context: str | None = None,
     ) -> CouncilRound:
         """Run the first round of parallel queries."""
         round_start = datetime.now()
@@ -455,7 +464,7 @@ class Council:
         async_tasks = []
 
         for p in participants:
-            agent_prompt = inject_role_prefix(prompt, p.role)
+            agent_prompt = inject_role_prefix(prompt, p.role, context=project_context)
 
             task = self._engine.create_task(
                 command=f"council_{p.seat}",
@@ -494,7 +503,7 @@ class Council:
                 continue
             task = tasks.get(p.seat)
             if task and task.status == "failed" and self._is_capacity_error(task, p.runner):
-                agent_prompt = inject_role_prefix(prompt, p.role)
+                agent_prompt = inject_role_prefix(prompt, p.role, context=project_context)
                 fallback_task, fallback_runner_name = await self._run_fallback(
                     p.seat, p.runner.name, agent_prompt, working_directory, round_start,
                 )
