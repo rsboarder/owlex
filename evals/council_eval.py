@@ -100,7 +100,7 @@ async def score_all_agents(
     return scored, consistency
 
 
-async def run_eval(working_dir: str, label: str = "", skip_judge: bool = False) -> dict:
+async def run_eval(working_dir: str, label: str = "", skip_judge: bool = False, cooldown: int = 0) -> dict:
     """Run full evaluation pipeline."""
     questions = load_questions()
     timestamp = datetime.now().isoformat()
@@ -128,6 +128,11 @@ async def run_eval(working_dir: str, label: str = "", skip_judge: bool = False) 
     all_consistency = []
 
     for i, q in enumerate(questions):
+        if i > 0 and cooldown > 0:
+            print(f"  Cooldown {cooldown}s...", end="", flush=True)
+            await asyncio.sleep(cooldown)
+            print(" done")
+
         print(f"[{i+1}/{len(questions)}] {q['id']}: {q['question'][:80]}...")
 
         # Run council
@@ -222,6 +227,8 @@ async def main():
                         help="Show questions and exit without running")
     parser.add_argument("--skip-judge", action="store_true",
                         help="Skip LLM judging, just capture council outputs")
+    parser.add_argument("--cooldown", type=int, default=30,
+                        help="Seconds to wait between questions (default: 30)")
     parser.add_argument("--questions", default=str(QUESTIONS_FILE),
                         help="Path to questions JSON file")
     args = parser.parse_args()
@@ -242,7 +249,7 @@ async def main():
         print(stdout.decode().strip() if proc.returncode == 0 else "NOT FOUND")
         return
 
-    results = await run_eval(args.working_dir, args.label, skip_judge=args.skip_judge)
+    results = await run_eval(args.working_dir, args.label, skip_judge=args.skip_judge, cooldown=args.cooldown)
     path = save_results(results, args.label)
     print(f"\nResults saved to: {path}")
 
