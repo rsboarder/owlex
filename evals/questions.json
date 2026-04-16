@@ -1,0 +1,72 @@
+[
+  {
+    "id": "arch-1",
+    "category": "architecture",
+    "question": "We're building a mobile app (React Native/Expo) alongside the existing TMA (Next.js). Should we share Zustand stores between apps via a shared package, or should each app have its own stores that consume shared API clients? What are the tradeoffs?",
+    "context_hint": ["src/store/", "packages/shared/", "apps/mobile/", "apps/tma/"],
+    "expected_topics": ["zustand", "shared package", "platform differences", "serialization", "react native", "bundle size"]
+  },
+  {
+    "id": "arch-2",
+    "category": "architecture",
+    "question": "Our API routes use a routeHandler wrapper for error handling and auth. Some routes are growing past 200 lines. What's the right pattern for extracting business logic — domain service classes, plain functions, or something else? Consider our existing patterns.",
+    "context_hint": ["src/app/api/", "src/lib/backend/"],
+    "expected_topics": ["routeHandler", "domain functions", "separation of concerns", "testing", "transaction handling"]
+  },
+  {
+    "id": "arch-3",
+    "category": "architecture",
+    "question": "We have denormalized city counters (activeBookCount, activeUserCount) that must stay in sync with the source data. Currently BookMutationService handles this atomically. Should we add a reconciliation cron job as a safety net, or is the atomic service approach sufficient?",
+    "context_hint": ["src/lib/backend/domain/", "packages/db/prisma/schema.prisma"],
+    "expected_topics": ["denormalization", "reconciliation", "atomic updates", "eventual consistency", "cron", "drift detection"]
+  },
+  {
+    "id": "review-1",
+    "category": "code_review",
+    "question": "Review the useAutosave hook pattern for potential issues. It debounces saves and retries on failure. What could go wrong with race conditions, memory leaks, or error handling?",
+    "context_hint": ["apps/tma/src/hooks/useAutosave.ts", "packages/shared/src/profile/useAutosave.ts"],
+    "expected_topics": ["debounce", "cleanup", "unmount", "race condition", "stale closure", "retry", "pendingSaveRef"]
+  },
+  {
+    "id": "review-2",
+    "category": "code_review",
+    "question": "We use Prisma with a Neon serverless driver. What are the common pitfalls with this setup? Consider connection pooling, raw queries, UUID casting, and migration patterns.",
+    "context_hint": ["packages/db/prisma/schema.prisma", "src/lib/backend/prisma.ts"],
+    "expected_topics": ["neon", "connection pooling", "uuid text cast", "executeRaw", "migration", "serverless"]
+  },
+  {
+    "id": "review-3",
+    "category": "code_review",
+    "question": "Our Redis usage includes sorted sets for swipe tracking and caching with typed get<T>(). What are potential issues with our Redis patterns — TTL management, race conditions with sorted sets, or data consistency?",
+    "context_hint": ["src/lib/backend/redis/", "packages/core/src/lib/backend/redis/"],
+    "expected_topics": ["sorted sets", "TTL", "race condition", "ZRANGE", "cache invalidation", "ENV_PREFIX"]
+  },
+  {
+    "id": "bug-1",
+    "category": "bug_investigation",
+    "question": "Users sometimes see an empty explore feed even though books exist in their city. What could cause this? Walk through the elimination pipeline: available books → minus swiped → minus excluded → minus cooling-off → minus blocked users.",
+    "context_hint": ["src/features/explore/", "src/lib/backend/feed/"],
+    "expected_topics": ["feed pipeline", "swipe tracking", "Redis sorted set", "cooling-off", "candidateCount", "exclusion"]
+  },
+  {
+    "id": "bug-2",
+    "category": "bug_investigation",
+    "question": "After changing a user's home city, some UI elements still show the old city data. What layers of state could be stale — database, Redis cache, Zustand store, session state? How should cache invalidation work for a source-of-truth field change?",
+    "context_hint": ["src/store/", "src/lib/backend/redis/"],
+    "expected_topics": ["cache invalidation", "derived state", "zustand", "redis", "session", "invalidateX", "source of truth"]
+  },
+  {
+    "id": "design-1",
+    "category": "design_tradeoff",
+    "question": "We need to implement push notifications for book swap reminders. Should we use a pull-based approach (check on app open) or push-based (scheduled QStash jobs)? Consider our existing QStash infrastructure and Telegram bot integration.",
+    "context_hint": ["src/lib/backend/notifications/", "src/lib/backend/qstash/"],
+    "expected_topics": ["QStash", "push notification", "scheduling", "Telegram bot", "idempotency", "rate limiting"]
+  },
+  {
+    "id": "design-2",
+    "category": "design_tradeoff",
+    "question": "Our subscription system uses Telegram Stars for payments. We're considering adding Apple/Google IAP for the mobile app. How should we architect a multi-provider subscription system? Consider webhook handling, receipt validation, and subscription state management.",
+    "context_hint": ["src/features/subscription/", "src/app/api/webhooks/"],
+    "expected_topics": ["IAP", "webhook", "receipt validation", "subscription state", "idempotent", "multi-provider", "Telegram Stars"]
+  }
+]
