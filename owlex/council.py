@@ -207,7 +207,7 @@ class Council:
 
         if timeout is None:
             timeout = config.default_timeout
-        COUNCIL_MIN_TIMEOUT = 300
+        COUNCIL_MIN_TIMEOUT = 120
         if timeout > 0 and timeout < COUNCIL_MIN_TIMEOUT:
             self.log(f"Timeout {timeout}s below council minimum, using {COUNCIL_MIN_TIMEOUT}s")
             timeout = COUNCIL_MIN_TIMEOUT
@@ -364,11 +364,18 @@ class Council:
         for task in tasks.values():
             if task.async_task in pending:
                 self.log(f"{task.command} timed out")
-                # Set status before killing so CancelledError handler skips duplicate logging
                 task.status = "failed"
                 task.error = f"Timed out after {timeout} seconds" if timeout else "Timed out"
                 task.completion_time = datetime.now()
-                await self._engine.kill_task_subprocess(task)
+                # Force kill: SIGKILL immediately, don't wait for graceful shutdown
+                if task.process and task.process.returncode is None:
+                    try:
+                        task.process.kill()
+                        await asyncio.wait_for(task.process.wait(), timeout=5.0)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+                if task.async_task and not task.async_task.done():
+                    task.async_task.cancel()
                 self._engine._log_timing(task)
 
     @staticmethod
