@@ -64,25 +64,17 @@ def build_deliberation_prompt(
     """
     Build the deliberation prompt for round 2.
 
+    Agent identities are anonymized (Response A, B, C...) and order is randomized
+    to prevent self-preference bias and anchoring effects.
+
     By default, the original_prompt is NOT included because R2 agents resume from
     R1 sessions and already have the original question in their context.
 
     When include_original=True (used for exec fallback when session resume fails),
     the original prompt is included so the agent has full context.
-
-    Args:
-        original_prompt: The original question asked
-        codex_answer: Codex's round 1 answer (optional if excluded)
-        gemini_answer: Gemini's round 1 answer (optional if excluded)
-        opencode_answer: OpenCode's round 1 answer (optional if excluded)
-        claudeor_answer: ClaudeOR's round 1 answer (optional if excluded)
-        claude_answer: Optional Claude opinion to include
-        critique: If True, use critique mode prompts
-        include_original: If True, include original_prompt in the output (for exec fallback)
-
-    Returns:
-        Complete deliberation prompt string
     """
+    import random
+
     if critique:
         intro = DELIBERATION_INTRO_CRITIQUE
         instruction = DELIBERATION_INSTRUCTION_CRITIQUE
@@ -92,30 +84,28 @@ def build_deliberation_prompt(
 
     parts = [COUNCIL_SYSTEM_INSTRUCTION + intro]
 
-    # Include original prompt when exec fallback is used (agent has no R1 context)
     if include_original and original_prompt:
         parts.extend(["", "ORIGINAL QUESTION:", original_prompt])
 
+    # Collect all answers, anonymize, and randomize order
+    answers = []
+    all_named = {
+        "codex": codex_answer, "gemini": gemini_answer, "opencode": opencode_answer,
+        "claudeor": claudeor_answer, "aichat": aichat_answer, "cursor": cursor_answer,
+    }
+    for answer in all_named.values():
+        if answer:
+            answers.append(answer)
+
     if claude_answer:
-        parts.extend(["", "CLAUDE'S ANSWER:", claude_answer])
+        answers.append(claude_answer)
 
-    if codex_answer:
-        parts.extend(["", "CODEX'S ANSWER:", codex_answer])
+    random.shuffle(answers)
 
-    if gemini_answer:
-        parts.extend(["", "GEMINI'S ANSWER:", gemini_answer])
-
-    if opencode_answer:
-        parts.extend(["", "OPENCODE'S ANSWER:", opencode_answer])
-
-    if claudeor_answer:
-        parts.extend(["", "CLAUDE (OPENROUTER)'S ANSWER:", claudeor_answer])
-
-    if aichat_answer:
-        parts.extend(["", "AICHAT'S ANSWER:", aichat_answer])
-
-    if cursor_answer:
-        parts.extend(["", "CURSOR'S ANSWER:", cursor_answer])
+    labels = "ABCDEFGHIJ"
+    for i, answer in enumerate(answers):
+        label = labels[i] if i < len(labels) else str(i + 1)
+        parts.extend(["", f"RESPONSE {label}:", answer])
 
     parts.extend(["", instruction])
 

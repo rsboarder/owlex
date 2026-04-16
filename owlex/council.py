@@ -11,11 +11,13 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
+import random
+
 from .config import config
 from .context import gather_context
 from .engine import engine, build_agent_response, AGENT_RUNNERS
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
-from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver
+from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver, BUILTIN_ROLES
 from .models import (
     Agent,
     AgentResponse,
@@ -107,6 +109,11 @@ class Council:
         # Resolve roles for all seats
         resolved_roles = self._resolver.resolve(role_spec, seats)
 
+        # Default: claudeor is always the critic/skeptic (unless explicit roles override)
+        if role_spec is None and "claudeor" in resolved_roles:
+            if resolved_roles["claudeor"].id == RoleId.NEUTRAL.value:
+                resolved_roles["claudeor"] = BUILTIN_ROLES[RoleId.SKEPTIC.value]
+
         # Partition by CLI availability and configuration
         available = []
         unavailable = []
@@ -173,12 +180,16 @@ class Council:
 
         return participants
 
+    # Consistency threshold for auto-deliberation.
+    # Below this = agents disagree enough to warrant R2. Above = skip R2.
+    AUTO_DELIBERATION_THRESHOLD = 2.5
+
     async def deliberate(
         self,
         prompt: str,
         working_directory: str | None = None,
         claude_opinion: str | None = None,
-        deliberate: bool = True,
+        deliberate: bool | str = True,
         critique: bool = True,
         timeout: int | None = None,
         roles: RoleSpec = None,
@@ -252,8 +263,22 @@ class Council:
         round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, participants, project_context)
         await self.notify("Council Round 1 complete", progress=50)
 
-        # === Round 2 ===
+        # === Round 2 (auto-skip when consensus is high) ===
         round_2 = None
+        if deliberate == "auto":
+            r1_contents = {}
+            for agent_name in Agent:
+                r1_result = getattr(round_1, agent_name.value, None)
+                if r1_result and r1_result.content:
+                    r1_contents[agent_name.value] = r1_result.content
+            consistency = self._compute_consistency(r1_contents)
+            if consistency >= self.AUTO_DELIBERATION_THRESHOLD:
+                self.log(f"R1 consensus sufficient ({consistency:.1f} >= {self.AUTO_DELIBERATION_THRESHOLD}), skipping R2")
+                deliberate = False
+            else:
+                self.log(f"R1 disagreement detected ({consistency:.1f} < {self.AUTO_DELIBERATION_THRESHOLD}), triggering R2")
+                deliberate = True
+
         if deliberate:
             await self.notify("Council Round 2: deliberation phase", progress=60)
             round_2 = await self._run_round_2(
@@ -314,6 +339,31 @@ class Council:
     def _r2_kwargs(agent_name: str) -> dict:
         """Agent-specific kwargs for R2 execution. No search in R2."""
         return {}
+
+    @staticmethod
+    def _compute_consistency(agent_responses: dict[str, str]) -> float:
+        """Compute cross-agent consistency (1-5). Higher = more agreement."""
+        if len(agent_responses) < 2:
+            return 5.0
+        term_sets = []
+        for content in agent_responses.values():
+            words = set()
+            for word in content.lower().split():
+                cleaned = word.strip(".,;:!?()\"'`")
+                if len(cleaned) > 5 and cleaned.isalpha():
+                    words.add(cleaned)
+            term_sets.append(words)
+        if len(term_sets) < 2:
+            return 3.0
+        similarities = []
+        for i in range(len(term_sets)):
+            for j in range(i + 1, len(term_sets)):
+                intersection = len(term_sets[i] & term_sets[j])
+                union = len(term_sets[i] | term_sets[j])
+                if union > 0:
+                    similarities.append(intersection / union)
+        avg = sum(similarities) / len(similarities) if similarities else 0
+        return round(1 + avg * 4, 1)
 
     @staticmethod
     def _collect_timing(round_data: CouncilRound, round_num: int) -> list[AgentTiming]:

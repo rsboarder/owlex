@@ -1019,7 +1019,7 @@ async def council_ask(
     prompt: str = Field(description="The question or task to send to the council"),
     claude_opinion: str | None = Field(default=None, description="Claude's initial opinion to share with the council"),
     working_directory: str | None = Field(default=None, description="Working directory for context"),
-    deliberate: bool = Field(default=True, description="If true, share answers between agents for a second round of deliberation"),
+    deliberate: bool | str = Field(default="auto", description="If true, always run R2 deliberation. If 'auto' (default), skip R2 when agents agree. If false, R1 only."),
     critique: bool = Field(default=False, description="If true, round 2 asks agents to critique/find flaws instead of revise"),
     timeout: int = Field(default=DEFAULT_TIMEOUT, description="Timeout per agent in seconds"),
     roles: dict[str, str] | list[str] | None = Field(
