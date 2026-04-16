@@ -13,6 +13,7 @@ from typing import Any
 
 import random
 
+from .agreement import score_agreement
 from .config import config
 from .context import gather_context
 from .engine import engine, build_agent_response, AGENT_RUNNERS
@@ -271,12 +272,12 @@ class Council:
                 r1_result = getattr(round_1, agent_name.value, None)
                 if r1_result and r1_result.content:
                     r1_contents[agent_name.value] = r1_result.content
-            consistency = self._compute_consistency(r1_contents)
-            if consistency >= self.AUTO_DELIBERATION_THRESHOLD:
-                self.log(f"R1 consensus sufficient ({consistency:.1f} >= {self.AUTO_DELIBERATION_THRESHOLD}), skipping R2")
+            agreement, reason = await score_agreement(prompt, r1_contents)
+            if agreement >= self.AUTO_DELIBERATION_THRESHOLD:
+                self.log(f"R1 consensus sufficient ({agreement:.1f}/5: {reason}), skipping R2")
                 deliberate = False
             else:
-                self.log(f"R1 disagreement detected ({consistency:.1f} < {self.AUTO_DELIBERATION_THRESHOLD}), triggering R2")
+                self.log(f"R1 disagreement detected ({agreement:.1f}/5: {reason}), triggering R2")
                 deliberate = True
 
         if deliberate:
