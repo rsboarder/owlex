@@ -100,7 +100,7 @@ async def score_all_agents(
     return scored, consistency
 
 
-async def run_eval(working_dir: str, label: str = "") -> dict:
+async def run_eval(working_dir: str, label: str = "", skip_judge: bool = False) -> dict:
     """Run full evaluation pipeline."""
     questions = load_questions()
     timestamp = datetime.now().isoformat()
@@ -135,23 +135,29 @@ async def run_eval(working_dir: str, label: str = "") -> dict:
         council_result = await run_council(q["question"], working_dir)
         print(f" done ({council_result['total_duration_s']:.1f}s)")
 
-        # Score responses
-        print("  Scoring responses:")
-        scored_agents, consistency = await score_all_agents(
-            q["question"], q.get("expected_topics", []), council_result["agents"],
-        )
+        # Score responses (or skip)
+        if skip_judge:
+            scored_agents = council_result["agents"]
+            contents = {k: v.get("content", "") for k, v in scored_agents.items() if v.get("content")}
+            consistency = compute_consistency(contents)
+            avg_scores = {}
+            completed = sum(1 for v in scored_agents.values() if v.get("status") == "completed")
+            print(f"  {completed} agents completed (judge skipped)")
+        else:
+            print("  Scoring responses:")
+            scored_agents, consistency = await score_all_agents(
+                q["question"], q.get("expected_topics", []), council_result["agents"],
+            )
+            question_scores = {c: [] for c in CRITERIA}
+            for agent_data in scored_agents.values():
+                scores = agent_data.get("scores", {})
+                for c in CRITERIA:
+                    v = scores.get(c, 0)
+                    if v > 0:
+                        question_scores[c].append(v)
+                        all_scores[c].append(v)
+            avg_scores = {c: (sum(v) / len(v) if v else 0) for c, v in question_scores.items()}
 
-        # Aggregate scores
-        question_scores = {c: [] for c in CRITERIA}
-        for agent_data in scored_agents.values():
-            scores = agent_data.get("scores", {})
-            for c in CRITERIA:
-                v = scores.get(c, 0)
-                if v > 0:
-                    question_scores[c].append(v)
-                    all_scores[c].append(v)
-
-        avg_scores = {c: (sum(v) / len(v) if v else 0) for c, v in question_scores.items()}
         all_consistency.append(consistency)
 
         question_result = {
@@ -166,9 +172,12 @@ async def run_eval(working_dir: str, label: str = "") -> dict:
         }
         results["questions"].append(question_result)
 
-        print(f"  Avg: rel={avg_scores['relevance']:.1f} spec={avg_scores['specificity']:.1f} "
-              f"act={avg_scores['actionability']:.1f} depth={avg_scores['depth']:.1f} "
-              f"acc={avg_scores['accuracy']:.1f} | consistency={consistency:.1f}")
+        if skip_judge:
+            print(f"  consistency={consistency:.1f} | duration={council_result['total_duration_s']:.1f}s")
+        else:
+            print(f"  Avg: rel={avg_scores['relevance']:.1f} spec={avg_scores['specificity']:.1f} "
+                  f"act={avg_scores['actionability']:.1f} depth={avg_scores['depth']:.1f} "
+                  f"acc={avg_scores['accuracy']:.1f} | consistency={consistency:.1f}")
         print()
 
     # Summary
@@ -211,6 +220,8 @@ async def main():
                         help="Label for results file (default: timestamp)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show questions and exit without running")
+    parser.add_argument("--skip-judge", action="store_true",
+                        help="Skip LLM judging, just capture council outputs")
     parser.add_argument("--questions", default=str(QUESTIONS_FILE),
                         help="Path to questions JSON file")
     args = parser.parse_args()
@@ -231,7 +242,7 @@ async def main():
         print(stdout.decode().strip() if proc.returncode == 0 else "NOT FOUND")
         return
 
-    results = await run_eval(args.working_dir, args.label)
+    results = await run_eval(args.working_dir, args.label, skip_judge=args.skip_judge)
     path = save_results(results, args.label)
     print(f"\nResults saved to: {path}")
 
