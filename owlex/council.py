@@ -234,8 +234,8 @@ class Council:
             self.log(f"Roles assigned: {roles_summary}")
             await self.notify(f"Council roles: {roles_summary}", progress=10)
 
-        # === Gather shared context ===
-        project_context = await gather_context(working_directory)
+        # === Gather shared context (relevant learnings for this question) ===
+        project_context = await gather_context(working_directory, question=prompt)
         if project_context:
             self.log(f"Context gathered: {len(project_context)} chars")
         else:
