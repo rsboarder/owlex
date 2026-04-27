@@ -16,8 +16,8 @@
   "hooks": "./hooks/delegation-hooks.json",
   "mcpServers": {
     "owlex": {
-      "command": "uvx",
-      "args": ["--from", "owlex", "owlex-server"]
+      "command": "owlex-server",
+      "args": []
     }
   }
 }

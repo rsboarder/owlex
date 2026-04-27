@@ -116,6 +116,18 @@ class ClaudeORRunner(AgentRunner):
     def cli_command(self) -> str:
         return "claude"
 
+    @property
+    def output_prefix(self) -> str:
+        return "Claude (OpenRouter) Output"
+
+    @property
+    def is_configured(self) -> bool:
+        import os
+        return bool(
+            config.claudeor.api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+        )
+
     def _get_env_overrides(self) -> dict[str, str]:
         """Get environment variable overrides for OpenRouter."""
         import os
