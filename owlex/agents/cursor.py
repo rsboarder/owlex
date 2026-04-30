@@ -118,6 +118,7 @@ class CursorRunner(AgentRunner):
             output_prefix="Cursor Output",
             not_found_hint="Please install Cursor Agent CLI: curl https://cursor.com/install -fsSL | bash",
             stream=False,  # Print mode doesn't stream
+            model=model,
         )
 
     def build_resume_command(
@@ -163,6 +164,7 @@ class CursorRunner(AgentRunner):
             output_prefix="Cursor Output",
             not_found_hint="Please install Cursor Agent CLI: curl https://cursor.com/install -fsSL | bash",
             stream=False,
+            model=model,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

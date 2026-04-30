@@ -19,6 +19,7 @@ from .engine import engine, DEFAULT_TIMEOUT, codex_runner, gemini_runner, openco
 from .council import Council
 from .config import config
 from .roles import get_resolver
+from . import store
 
 
 # Initialize FastMCP server
@@ -197,6 +198,30 @@ def _validate_working_directory(working_directory: str | None) -> tuple[str | No
     if not os.path.isdir(expanded):
         return None, f"working_directory '{working_directory}' does not exist or is not a directory."
     return expanded, None
+
+
+def _council_recursion_block(tool_name: str) -> dict | None:
+    """Return an error dict when this owlex-server is running inside another council.
+
+    The engine sets ``OWLEX_COUNCIL_DEPTH`` on every spawned agent subprocess. When
+    an agent's own owlex-server is invoked, it inherits the env and refuses
+    council_ask / rate_council so a council can't recursively spawn sub-councils.
+    """
+    try:
+        depth = int(os.environ.get("OWLEX_COUNCIL_DEPTH", "0") or 0)
+    except ValueError:
+        depth = 0
+    if depth > 0:
+        return TaskResponse(
+            success=False,
+            error=(
+                f"Recursive {tool_name} is not allowed (OWLEX_COUNCIL_DEPTH={depth}). "
+                f"This owlex-server is running inside an active council; a participant "
+                f"cannot spawn another council."
+            ),
+            error_code=ErrorCode.INVALID_ARGS,
+        ).model_dump()
+    return None
 
 
 # === Codex Tools ===
@@ -970,45 +995,63 @@ async def agent_timing(
     last_n: int = Field(default=20, description="Number of recent entries to return"),
     agent_filter: str | None = Field(default=None, description="Filter by agent name (e.g. 'codex', 'gemini')"),
 ) -> str:
-    """Show recent agent execution timing from the persistent log at ~/.owlex/logs/timing.jsonl.
+    """Show recent agent execution timing from the canonical store at ~/.owlex/owlex.db.
     Use this to diagnose which CLI agent is slow."""
     import json as _json
-    from pathlib import Path as _Path
+    from . import store as _store
 
-    log_path = _Path.home() / ".owlex" / "logs" / "timing.jsonl"
-    if not log_path.exists():
-        return _json.dumps({"message": "No timing data yet. Run a council or agent task first.", "entries": []})
+    conn = _store.connect()
 
-    entries = []
-    for line in log_path.read_text().strip().splitlines():
-        try:
-            entry = _json.loads(line)
-            if agent_filter and agent_filter.lower() not in entry.get("command", "").lower():
-                continue
-            entries.append(entry)
-        except _json.JSONDecodeError:
-            continue
+    where, args = "WHERE status != 'running'", []
+    if agent_filter:
+        where += " AND command LIKE ?"
+        args.append(f"%{agent_filter.lower()}%")
 
-    recent = entries[-last_n:]
-    recent.reverse()  # Most recent first
+    recent_rows = conn.execute(
+        f"""SELECT task_id, command, status, duration_s, completed_at, council_id, error
+              FROM calls {where}
+             ORDER BY completed_at DESC
+             LIMIT ?""",
+        [*args, last_n],
+    ).fetchall()
 
-    # Compute per-agent stats from all entries
-    from collections import defaultdict
-    agent_stats: dict[str, list[float]] = defaultdict(list)
-    for e in entries:
-        cmd = e.get("command", "")
-        dur = e.get("duration_s", 0)
-        if dur > 0:
-            agent_stats[cmd].append(dur)
-
-    summary = {}
-    for cmd, durations in sorted(agent_stats.items()):
-        summary[cmd] = {
-            "count": len(durations),
-            "avg_s": round(sum(durations) / len(durations), 1),
-            "max_s": round(max(durations), 1),
-            "min_s": round(min(durations), 1),
+    recent = [
+        {
+            "ts": r["completed_at"],
+            "task_id": (r["task_id"] or "")[:8],
+            "command": r["command"],
+            "status": r["status"],
+            "duration_s": round(r["duration_s"] or 0.0, 1),
+            **({"council_id": r["council_id"]} if r["council_id"] else {}),
+            **({"error": (r["error"] or "")[:200]} if r["status"] == "failed" and r["error"] else {}),
         }
+        for r in recent_rows
+    ]
+
+    summary_rows = conn.execute(
+        """SELECT command,
+                  COUNT(*)        AS count,
+                  AVG(duration_s) AS avg_s,
+                  MAX(duration_s) AS max_s,
+                  MIN(duration_s) AS min_s
+             FROM calls
+            WHERE status != 'running' AND duration_s > 0
+            GROUP BY command
+            ORDER BY command"""
+    ).fetchall()
+
+    summary = {
+        r["command"]: {
+            "count": r["count"],
+            "avg_s": round(r["avg_s"] or 0.0, 1),
+            "max_s": round(r["max_s"] or 0.0, 1),
+            "min_s": round(r["min_s"] or 0.0, 1),
+        }
+        for r in summary_rows
+    }
+
+    if not recent and not summary:
+        return _json.dumps({"message": "No timing data yet. Run a council or agent task first.", "entries": []})
 
     return _json.dumps({"summary": summary, "recent": recent}, indent=2)
 
@@ -1017,55 +1060,40 @@ async def agent_timing(
 async def council_ask(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or task to send to the council"),
-    claude_opinion: str | None = Field(default=None, description="Claude's initial opinion to share with the council"),
+    claude_opinion: str | None = Field(default=None, description="Claude's initial opinion (optional)"),
     working_directory: str | None = Field(default=None, description="Working directory for context"),
-    deliberate: bool | str = Field(default="auto", description="If true, always run R2 deliberation. If 'auto' (default), skip R2 when agents agree. If false, R1 only."),
-    critique: bool = Field(default=False, description="If true, round 2 asks agents to critique/find flaws instead of revise"),
+    deliberate: bool | str = Field(default="auto", description="If true, always run R2; 'auto' skips on consensus; false = R1 only"),
+    critique: bool = Field(default=False, description="If true, R2 critiques instead of revising"),
     timeout: int = Field(default=DEFAULT_TIMEOUT, description="Timeout per agent in seconds"),
-    roles: dict[str, str] | list[str] | None = Field(
-        default=None,
-        description=(
-            "Role assignments for agents. Can be:\n"
-            "- Dict mapping agent to role: {\"codex\": \"security\", \"gemini\": \"perf\"}\n"
-            "- List of roles (auto-assigned in order): [\"security\", \"perf\", \"skeptic\"]\n"
-            "Built-in roles: security, perf, skeptic, architect, maintainer, dx, testing"
-        )
-    ),
-    team: str | None = Field(
-        default=None,
-        description=(
-            "Team preset name (alternative to roles). "
-            "Built-in teams: security_audit, code_review, architecture_review, devil_advocate, balanced"
-        )
-    ),
+    roles: dict[str, str] | list[str] | None = Field(default=None, description="Role assignments (same shape as council_ask)"),
+    team: str | None = Field(default=None, description="Team preset name (alternative to roles)"),
 ) -> dict:
+    """REQUIRED FOLLOW-UP: After this tool returns, you MUST call
+    rate_council(council_id=..., ratings={...}) BEFORE you present the
+    synthesized answer to the user. Skipping the rating defeats the entire
+    purpose of this tool — it exists to collect blind per-agent quality data
+    that the dashboard depends on. Rate every letter that appears in round_1.
+
+    Asks the council with anonymized responses. Returns letter-keyed responses
+    (Response A, B, C, ...) and persists the letter→agent mapping server-side.
+    The mapping is never returned to the orchestrator — ratings are committed
+    against letters and resolved to agent names server-side.
+
+    Workflow:
+      1. Call this tool with your prompt.
+      2. Read each Response A/B/C/... and form your synthesis.
+      3. Call rate_council with one entry per letter:
+         {"A": {"score": -1|+1, "groundedness"?: 1-5, "helpfulness"?: 1-5,
+                "correctness"?: 1-5, "reason"?: "one sentence"}}
+      4. THEN present the synthesized answer to the user.
     """
-    Ask the council (Codex, Gemini, and OpenCode) a question and collect their answers.
+    import random as _random
+    from .prompts import anonymize_round_responses
 
-    Sends the prompt to all three agents in parallel, waits for responses,
-    and returns all answers for the MCP client (Claude Code) to synthesize.
+    blocked = _council_recursion_block("council_ask")
+    if blocked is not None:
+        return blocked
 
-    Supports specialist roles ("hats") for agents to operate with specific perspectives.
-
-    Role specification (mutually exclusive, priority order):
-    1. roles parameter - explicit mapping or auto-assign list
-    2. team parameter - use a predefined team preset
-    3. Neither - all agents operate without special roles
-
-    Examples:
-    - roles={"codex": "security", "gemini": "perf"} - explicit assignment
-    - roles=["security", "perf", "skeptic"] - auto-assign to codex, gemini, opencode
-    - team="security_audit" - use the security audit team preset
-
-    If claude_opinion is provided, it will be shared with other council members
-    during deliberation so they can consider Claude's perspective.
-
-    If deliberate=True, shares all answers (including Claude's) with each agent
-    for a second round, allowing them to revise after seeing others' responses.
-
-    If critique=True, round 2 asks agents to find bugs, security issues, and
-    architectural flaws instead of politely revising their answers.
-    """
     if not prompt or not prompt.strip():
         return TaskResponse(success=False, error="'prompt' parameter is required.", error_code=ErrorCode.INVALID_ARGS).model_dump()
 
@@ -1073,7 +1101,6 @@ async def council_ask(
     if error:
         return TaskResponse(success=False, error=error, error_code=ErrorCode.INVALID_ARGS).model_dump()
 
-    # Auto-parse stringified JSON for roles (MCP clients may serialize as string)
     if isinstance(roles, str):
         try:
             roles = json.loads(roles)
@@ -1084,7 +1111,6 @@ async def council_ask(
                 error_code=ErrorCode.INVALID_ARGS
             ).model_dump()
 
-    # Validate that roles and team are not both specified
     if roles is not None and team is not None:
         return TaskResponse(
             success=False,
@@ -1092,13 +1118,9 @@ async def council_ask(
             error_code=ErrorCode.INVALID_ARGS
         ).model_dump()
 
-    # Use default team from config if no roles/team specified
     effective_team = team if team is not None else config.council.default_team
     role_spec = roles if roles is not None else effective_team
 
-    # Run council deliberation synchronously (blocking).
-    # This ensures all MCP notifications happen during the active tool call,
-    # preventing Claude Code from killing the server on unsolicited notifications.
     try:
         council = Council(context=ctx)
         response = await council.deliberate(
@@ -1110,19 +1132,137 @@ async def council_ask(
             timeout=timeout,
             roles=role_spec,
         )
-        return response.model_dump()
     except ValueError as e:
-        return TaskResponse(
-            success=False,
-            error=str(e),
-            error_code=ErrorCode.INVALID_ARGS,
-        ).model_dump()
+        return TaskResponse(success=False, error=str(e), error_code=ErrorCode.INVALID_ARGS).model_dump()
     except Exception as e:
         return TaskResponse(
             success=False,
             error=f"Council deliberation failed: {e}",
             error_code=ErrorCode.EXECUTION_FAILED,
         ).model_dump()
+
+    # Anonymize using a council-id-salted RNG so R1 and R2 share the same mapping.
+    council_id = council.council_id
+    salt = f"blind:{council_id}"
+    r1_by_label, mapping = anonymize_round_responses(response.round_1, salt=salt)
+    r2_by_label, _ = anonymize_round_responses(response.round_2, salt=salt) if response.round_2 else (None, None)
+
+    if mapping:
+        store.record_council_anonymization(council_id, mapping)
+
+    def _to_anon(ar):
+        if ar is None:
+            return None
+        d = ar.model_dump()
+        # Strip every field that could leak identity (agent name, session id).
+        d["agent"] = "anon"
+        d["session_id"] = None
+        return d
+
+    def _round_payload(by_label):
+        if not by_label:
+            return None
+        return {label: _to_anon(ar) for label, ar in by_label.items()}
+
+    r1_payload = _round_payload(r1_by_label)
+    r2_payload = _round_payload(r2_by_label)
+    letters_present = sorted((r1_payload or {}).keys())
+
+    payload = {
+        "_required_next_tool_call": (
+            f"REQUIRED: Before responding to the user, you MUST call "
+            f"rate_council(council_id='{council_id}', ratings={{...}}). "
+            f"Rate each of these letters: {letters_present}. "
+            f"Each rating is {{score: -1 or +1, groundedness?: 1-5, helpfulness?: 1-5, "
+            f"correctness?: 1-5, reason?: str}}. DO NOT respond to the user until "
+            f"this call has been dispatched. The letter→agent mapping is hidden — "
+            f"rate based on response content alone."
+        ),
+        "council_id": council_id,
+        "prompt": response.prompt,
+        "working_directory": response.working_directory,
+        "deliberation": response.deliberation,
+        "critique": response.critique,
+        "claude_opinion": response.claude_opinion.model_dump() if response.claude_opinion else None,
+        "round_1": r1_payload,
+        "round_2": r2_payload,
+        "metadata": response.metadata.model_dump(),
+    }
+    return payload
+
+
+@mcp.tool()
+async def rate_council(
+    council_id: str = Field(description="The council_id returned by council_ask"),
+    ratings: dict = Field(description="Map of letter → rating dict, e.g. {'A': {'score': 1, 'groundedness': 4, 'reason': '...'}, 'B': {...}}"),
+) -> dict:
+    """Submit per-letter blind ratings for a council. The server resolves
+    letters to agents and writes one row per agent into ``agent_scores``.
+    Required follow-up after every council_ask call.
+    """
+    blocked = _council_recursion_block("rate_council")
+    if blocked is not None:
+        return blocked
+
+    if isinstance(ratings, str):
+        try:
+            ratings = json.loads(ratings)
+        except (json.JSONDecodeError, TypeError):
+            return TaskResponse(
+                success=False,
+                error=f"Invalid ratings format: expected a JSON dict",
+                error_code=ErrorCode.INVALID_ARGS,
+            ).model_dump()
+
+    if not isinstance(ratings, dict) or not ratings:
+        return TaskResponse(
+            success=False,
+            error="'ratings' must be a non-empty dict mapping letter → rating",
+            error_code=ErrorCode.INVALID_ARGS,
+        ).model_dump()
+
+    mapping = store.get_council_anonymization(council_id)
+    if not mapping:
+        return TaskResponse(
+            success=False,
+            error=f"No blind anonymization found for council_id={council_id}. Was it created via council_ask?",
+            error_code=ErrorCode.NOT_FOUND,
+        ).model_dump()
+
+    rated: list[str] = []
+    errors: list[str] = []
+    for label, raw in ratings.items():
+        if not isinstance(raw, dict):
+            errors.append(f"{label}: rating must be a dict")
+            continue
+        score = raw.get("score")
+        if score not in (-1, 1):
+            errors.append(f"{label}: score must be -1 or +1, got {score!r}")
+            continue
+        agent = mapping.get(label)
+        if not agent:
+            errors.append(f"{label}: no agent mapped for this label in council {council_id}")
+            continue
+        dim_keys = ("groundedness", "helpfulness", "correctness")
+        dimensions = {k: raw[k] for k in dim_keys if k in raw and raw[k] is not None}
+        try:
+            store.record_agent_score(
+                council_id,
+                agent,
+                int(score),
+                rater="claude_blind",
+                dimensions=dimensions or None,
+                reason=raw.get("reason"),
+            )
+            rated.append(agent)
+        except Exception as e:
+            errors.append(f"{label} ({agent}): {e}")
+
+    return {
+        "ok": len(errors) == 0,
+        "agents_rated": rated,
+        "errors": errors,
+    }
 
 
 def main():

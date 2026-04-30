@@ -35,3 +35,7 @@ uv.lock
 # Runtime data
 data/
 .aider*
+
+# Dashboard frontend build artifacts
+owlex/dashboard/web/node_modules/
+owlex/dashboard/web/dist/

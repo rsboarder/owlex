@@ -180,6 +180,7 @@ class OpenCodeRunner(AgentRunner):
             output_prefix="OpenCode Output",
             not_found_hint="Please ensure OpenCode is installed (curl -fsSL https://opencode.ai/install | bash).",
             stream=True,
+            model=config.opencode.model,
         )
 
     def build_resume_command(
@@ -226,6 +227,7 @@ class OpenCodeRunner(AgentRunner):
             output_prefix="OpenCode Resume Output",
             not_found_hint="Please ensure OpenCode is installed (curl -fsSL https://opencode.ai/install | bash).",
             stream=False,  # Resume uses non-streaming mode
+            model=config.opencode.model,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

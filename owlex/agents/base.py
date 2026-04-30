@@ -19,6 +19,7 @@ class AgentCommand:
     stream: bool = True
     env_overrides: dict[str, str] | None = None  # Environment variable overrides
     fail_patterns: list[str] | None = None  # Kill process immediately if stderr matches any pattern
+    model: str | None = None  # Resolved model identifier — persisted on the calls row for OTel.
 
 
 class AgentRunner(ABC):

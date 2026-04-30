@@ -17,6 +17,7 @@ from .config import config
 from .models import Task, TaskStatus, AgentResponse, Agent
 from .agents import CodexRunner, GeminiRunner, OpenCodeRunner, ClaudeORRunner, AiChatRunner, CursorRunner
 from .agents.base import AgentRunner, AgentCommand
+from . import store
 
 
 def extract_content(result: str | None, prefix: str) -> str:
@@ -99,14 +100,11 @@ class TaskEngine:
     Manages task lifecycle, subprocess execution, and streaming.
     """
 
-    # Persistent timing log location
-    TIMING_LOG_DIR = Path.home() / ".owlex" / "logs"
-
     def __init__(self):
         self.tasks: dict[str, Task] = {}
         self._cleanup_task: asyncio.Task | None = None
-        # Ensure log directory exists
-        self.TIMING_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        # Open the canonical store; this also runs the one-shot legacy JSONL import.
+        store.connect()
         # Print security warnings on initialization
         config.print_warnings()
 
@@ -211,62 +209,44 @@ class TaskEngine:
             except Exception as e:
                 print(f"[ERROR] Failed to send {level} notification: {e}", file=sys.stderr, flush=True)
 
-    def _log_timing(self, task: Task):
-        """Append task timing to persistent JSONL log at ~/.owlex/logs/timing.jsonl."""
-        if not task.completion_time:
-            return
-        duration = (task.completion_time - task.start_time).total_seconds()
-        entry = {
-            "ts": task.completion_time.isoformat(),
-            "task_id": task.task_id[:8],
-            "command": task.command,
-            "status": task.status,
-            "duration_s": round(duration, 1),
-        }
-        if task.council_id:
-            entry["council_id"] = task.council_id
-        if task.status == "failed" and task.error:
-            entry["error"] = task.error[:200]
-        if task.result:
-            entry["output_chars"] = len(task.result)
-            entry["preview"] = task.result[:500]
-        if task.output_lines:
-            entry["last_lines"] = task.output_lines[-10:]
-        self._write_log(entry)
-
     def log_council_summary(self, council_id: str, round_num: int, agent_timings: list[tuple[str, float, str]]):
-        """Log a council round summary showing agent completion order.
+        """Persist a per-round summary of agent completion order."""
+        store.record_council_round(council_id, round_num, agent_timings)
 
-        Args:
-            council_id: Council session identifier
-            round_num: Round number (1 or 2)
-            agent_timings: List of (agent_name, duration_seconds, status) sorted by completion
-        """
-        ranking = [f"{name}={dur:.1f}s({st})" for name, dur, st in agent_timings]
-        entry = {
-            "ts": datetime.now().isoformat(),
-            "type": "council_round_summary",
-            "council_id": council_id,
-            "round": round_num,
-            "agent_order": ranking,
-            "slowest": agent_timings[-1][0] if agent_timings else None,
-            "fastest": agent_timings[0][0] if agent_timings else None,
-            "spread_s": round(agent_timings[-1][1] - agent_timings[0][1], 1) if len(agent_timings) >= 2 else 0,
-        }
-        self._write_log(entry)
-
-    def _write_log(self, entry: dict):
-        """Write a single JSON entry to the timing log."""
+    async def _parse_skills_async(self, task: Task) -> None:
+        """Locate the agent's session file and persist its tool/skill calls."""
         try:
-            log_path = self.TIMING_LOG_DIR / "timing.jsonl"
-            with open(log_path, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            # Lazy import — keeps engine importable without dashboard deps installed.
+            from .dashboard.parsers import parse_and_persist
+            agent, _ = self._derive_agent_and_round(task.command)
+            ts = (task.completion_time or task.start_time).isoformat()
+            # Run in a thread so file I/O doesn't block the event loop.
+            await asyncio.to_thread(parse_and_persist, task.task_id, agent, ts, None)
         except Exception as e:
-            print(f"[owlex] timing log write failed: {e}", file=sys.stderr, flush=True)
+            print(f"[owlex] skill parse failed for {task.task_id[:8]}: {e}", file=sys.stderr, flush=True)
+
+    @staticmethod
+    def _derive_agent_and_round(command: str) -> tuple[str, int]:
+        name = command or ""
+        if name.startswith("council_"):
+            name = name[len("council_"):]
+        round_n = 1
+        if name.endswith("_delib"):
+            name = name[: -len("_delib")]
+            round_n = 2
+        if "_" in name:
+            name = name.split("_", 1)[0]
+        return name, round_n
 
     async def _emit_task_notification(self, task: Task):
-        """Emit task completion/failure notification."""
-        self._log_timing(task)
+        """Emit task completion/failure notification and persist the terminal row."""
+        store.record_task_complete(task)
+        # Fire-and-forget skill/tool parsing so the dashboard span-tree fills in
+        # immediately. Best-effort: never block completion on it.
+        try:
+            asyncio.create_task(self._parse_skills_async(task))
+        except Exception:
+            pass
         if not task.context:
             return
         prefix = "[owlex]"
@@ -383,16 +363,30 @@ class TaskEngine:
         stream = agent_cmd.stream
         env_overrides = agent_cmd.env_overrides
 
-        # Build environment with overrides
-        env = None
+        # OWLEX-1 recursion fence: every agent subprocess inherits an incremented
+        # depth marker. The top of council_ask refuses when this is non-zero, so
+        # an agent inside a council can't spawn another council via its own
+        # owlex-server subprocess (the env propagates through nested processes).
+        try:
+            current_depth = int(_os.environ.get("OWLEX_COUNCIL_DEPTH", "0") or 0)
+        except ValueError:
+            current_depth = 0
+        depth_override = {"OWLEX_COUNCIL_DEPTH": str(current_depth + 1)}
+
+        # Build environment with overrides (depth marker always set; agent-specific
+        # overrides may layer on top but cannot remove the fence).
+        env = _os.environ.copy()
+        env.update(depth_override)
         if env_overrides:
-            env = _os.environ.copy()
             env.update(env_overrides)
+            env["OWLEX_COUNCIL_DEPTH"] = depth_override["OWLEX_COUNCIL_DEPTH"]
 
         try:
             task.status = TaskStatus.RUNNING.value
             task.output_lines = []
             task.stream_complete = False
+            task.model = agent_cmd.model
+            store.record_task_running(task, prompt=prompt)
 
             # Use DEVNULL when no prompt to write (avoids hanging Claude CLI)
             stdin_mode = (

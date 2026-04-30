@@ -66,6 +66,7 @@ class AiChatRunner(AgentRunner):
             output_prefix="AiChat Output",
             not_found_hint="Please ensure aichat is installed. See: https://github.com/sigoden/aichat",
             stream=True,
+            model=config.aichat.model,
         )
 
     def build_resume_command(
@@ -97,6 +98,7 @@ class AiChatRunner(AgentRunner):
             output_prefix="AiChat Output",
             not_found_hint="Please ensure aichat is installed. See: https://github.com/sigoden/aichat",
             stream=False,  # Non-streaming for R2 consistency
+            model=config.aichat.model,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

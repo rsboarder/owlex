@@ -77,6 +77,9 @@ class Task:
     # Streaming support
     output_lines: list[str] = field(default_factory=list)
     stream_complete: bool = False
+    # Resolved model identifier (gen_ai.request.model). Set by run_agent_command
+    # from AgentCommand.model when the runner knows the model.
+    model: str | None = None
 
 
 # === Pydantic Response Models ===

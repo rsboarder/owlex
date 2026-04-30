@@ -140,6 +140,7 @@ class CodexRunner(AgentRunner):
             output_prefix="Codex Output",
             not_found_hint="Please ensure Codex CLI is installed and in your PATH.",
             stream=True,
+            model=model_override,
         )
 
     def build_resume_command(
@@ -185,6 +186,7 @@ class CodexRunner(AgentRunner):
             output_prefix="Codex Resume Output",
             not_found_hint="Please ensure Codex CLI is installed and in your PATH.",
             stream=False,  # Resume uses non-streaming mode
+            model=model_override,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

@@ -5,6 +5,7 @@ Uses Claude CLI with OpenRouter as the backend for alternative models.
 
 import asyncio
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Callable
@@ -182,6 +183,7 @@ class ClaudeORRunner(AgentRunner):
             not_found_hint="Please ensure Claude CLI is installed. Run: npm install -g @anthropic-ai/claude-code",
             stream=False,  # Print mode doesn't stream
             env_overrides=self._get_env_overrides(),
+            model=config.claudeor.model or os.environ.get("CLAUDEOR_MODEL"),
         )
 
     def build_resume_command(

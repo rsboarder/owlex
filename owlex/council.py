@@ -13,6 +13,7 @@ from typing import Any
 
 import random
 
+from . import store
 from .agreement import score_agreement
 from .config import config
 from .context import gather_context
@@ -32,6 +33,12 @@ from .models import (
 
 
 ALL_SEATS = ("codex", "gemini", "opencode", "claudeor", "aichat", "cursor")
+
+
+def _word_set(text: str, min_len: int = 5) -> set[str]:
+    """Tokens of length >= min_len for Jaccard-style similarity (matches agreement.py:_fallback_score)."""
+    import re as _re
+    return {w.lower() for w in _re.findall(r"[A-Za-z]+", text or "") if len(w) >= min_len}
 
 
 def _log(msg: str):
@@ -266,13 +273,19 @@ class Council:
 
         # === Round 2 (auto-skip when consensus is high) ===
         round_2 = None
+        agreement_score: float | None = None
+        agreement_reason: str | None = None
+        # Always collect R1 contents — used by the auto-deliberation gate AND the
+        # post-hoc pairwise agreement matrix below.
+        r1_contents: dict[str, str] = {}
+        for agent_name in Agent:
+            r1_result = getattr(round_1, agent_name.value, None)
+            if r1_result and r1_result.content:
+                r1_contents[agent_name.value] = r1_result.content
+
         if deliberate == "auto":
-            r1_contents = {}
-            for agent_name in Agent:
-                r1_result = getattr(round_1, agent_name.value, None)
-                if r1_result and r1_result.content:
-                    r1_contents[agent_name.value] = r1_result.content
             agreement, reason = await score_agreement(prompt, r1_contents)
+            agreement_score, agreement_reason = agreement, reason
             if agreement >= self.AUTO_DELIBERATION_THRESHOLD:
                 self.log(f"R1 consensus sufficient ({agreement:.1f}/5: {reason}), skipping R2")
                 deliberate = False
@@ -292,6 +305,19 @@ class Council:
                 participants=participants,
             )
 
+        # Pairwise agreement matrix: judge every pair of R1 contents.
+        # Bounded concurrency so the agreement judge isn't hammered.
+        try:
+            await self._compute_and_persist_pairwise(prompt, r1_contents)
+        except Exception as e:
+            self.log(f"pairwise agreement failed: {e}")
+        # Position deltas: how much each agent changed between R1 and R2.
+        if round_2 is not None:
+            try:
+                self._compute_and_persist_position_deltas(round_1, round_2)
+            except Exception as e:
+                self.log(f"position-delta computation failed: {e}")
+
         # Build response
         claude_opinion_obj = None
         if claude_opinion and claude_opinion.strip():
@@ -309,6 +335,20 @@ class Council:
 
         resolved_roles = {p.seat: p.role for p in participants}
 
+        final_total_s = (datetime.now() - council_start).total_seconds()
+        rounds_count = 2 if deliberate else 1
+        store.record_council_outcome(
+            self.council_id,
+            total_duration_s=final_total_s,
+            rounds=rounds_count,
+            deliberation=bool(deliberate),
+            critique=critique,
+            agreement_score=agreement_score,
+            agreement_reason=agreement_reason,
+            progress_log=self.log_entries,
+            claude_opinion=(claude_opinion.strip() if claude_opinion else None),
+        )
+
         return CouncilResponse(
             prompt=prompt,
             working_directory=working_directory,
@@ -319,8 +359,8 @@ class Council:
             round_2=round_2,
             roles=self._build_role_assignments(resolved_roles),
             metadata=CouncilMetadata(
-                total_duration_seconds=(datetime.now() - council_start).total_seconds(),
-                rounds=2 if deliberate else 1,
+                total_duration_seconds=final_total_s,
+                rounds=rounds_count,
                 log=self.log_entries,
                 timing=timing,
                 slowest_agent=slowest,
@@ -340,6 +380,49 @@ class Council:
     def _r2_kwargs(agent_name: str) -> dict:
         """Agent-specific kwargs for R2 execution. No search in R2."""
         return {}
+
+    async def _compute_and_persist_pairwise(self, prompt: str, r1_contents: dict[str, str]) -> None:
+        """Score every unordered pair of R1 contents and persist to pairwise_agreements."""
+        agents = sorted(r1_contents.keys())
+        if len(agents) < 2:
+            return
+        pairs = [(agents[i], agents[j]) for i in range(len(agents)) for j in range(i + 1, len(agents))]
+        sem = asyncio.Semaphore(5)
+
+        async def _one(a: str, b: str) -> tuple[str, str, float, str]:
+            async with sem:
+                score, reason = await score_agreement(prompt, {a: r1_contents[a], b: r1_contents[b]})
+                return a, b, float(score), reason
+
+        results = await asyncio.gather(*[_one(a, b) for a, b in pairs], return_exceptions=True)
+        rows: list[tuple[str, str, float, str | None]] = []
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            a, b, score, reason = r
+            rows.append((a, b, score, reason))
+        if rows:
+            store.record_pairwise_agreements(self.council_id, rows, source="judge")
+            self.log(f"pairwise agreement: {len(rows)} pairs scored")
+
+    def _compute_and_persist_position_deltas(self, round_1: CouncilRound, round_2: CouncilRound) -> None:
+        """For each agent that participated in both rounds, persist a Jaccard distance R1→R2."""
+        for agent in Agent:
+            r1 = getattr(round_1, agent.value, None)
+            r2 = getattr(round_2, agent.value, None)
+            if not (r1 and r2 and r1.content and r2.content and r2.task_id):
+                continue
+            t1 = _word_set(r1.content)
+            t2 = _word_set(r2.content)
+            if not t1 and not t2:
+                continue
+            inter = len(t1 & t2)
+            union = len(t1 | t2) or 1
+            delta = 1.0 - (inter / union)
+            # Thresholds calibrated empirically against the historical distribution
+            # (~33rd / 67th percentile of all R1→R2 deltas).
+            label = "unchanged" if delta < 0.845 else "minor" if delta < 0.906 else "major"
+            store.record_position_delta(r2.task_id, position_delta=delta, position_label=label)
 
     @staticmethod
     def _compute_consistency(agent_responses: dict[str, str]) -> float:

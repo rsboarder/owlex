@@ -25,11 +25,16 @@ dependencies = [
 
 [project.scripts]
 owlex-server = "owlex.server:main"
+owlex-dashboard = "owlex.dashboard.server:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+]
+dashboard = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
 ]
 
 [tool.pytest.ini_options]
@@ -39,6 +44,9 @@ testpaths = ["tests"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["owlex*"]
+
+[tool.setuptools.package-data]
+"owlex.dashboard" = ["web/dist/**/*"]
 
 [dependency-groups]
 dev = [
