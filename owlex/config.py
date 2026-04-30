@@ -1,11 +1,77 @@
 """
 Centralized configuration for owlex.
 All settings are loaded from environment variables with sensible defaults.
+
+Env-var parsing happens in one place (``_env``), giving every field uniform
+truthy / numeric / list parsing and one place to add new conversions.
 """
 
 import os
 import sys
 from dataclasses import dataclass
+
+
+# === Env-var parsing helpers ============================================
+# Centralizing these collapses ~30 ad-hoc parsing call sites into 4 helpers
+# and gives every config field consistent semantics.
+
+_TRUTHY = {"true", "1", "yes", "on", "y"}
+_FALSY = {"false", "0", "no", "off", "n", ""}
+
+
+def _get_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean env var. Accepts true/false, 1/0, yes/no, on/off."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    val = raw.strip().lower()
+    if val in _TRUTHY:
+        return True
+    if val in _FALSY:
+        return default if val == "" else False
+    print(
+        f"[WARNING] {name}={raw!r} is not a valid boolean; using default {default}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return default
+
+
+def _get_int(name: str, default: int, *, min_value: int | None = None) -> int:
+    """Parse an int env var; warn and fall back on invalid or out-of-range values."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        print(
+            f"[WARNING] Invalid {name} value {raw!r}, using default {default}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default
+    if min_value is not None and val < min_value:
+        print(
+            f"[WARNING] {name} must be >= {min_value}, got {val}; using default {default}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default
+    return val
+
+
+def _get_str_or_none(name: str) -> str | None:
+    """Return env var stripped, or None if unset/empty."""
+    raw = os.environ.get(name, "").strip()
+    return raw or None
+
+
+def _get_csv(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Parse comma-separated list; lowercased; empty/missing → default."""
+    raw = os.environ.get(name, "")
+    items = tuple(p.strip().lower() for p in raw.split(",") if p.strip())
+    return items or default
 
 
 @dataclass(frozen=True)
@@ -94,91 +160,83 @@ class OwlexConfig:
             )
 
 
+def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
+    """Parse COUNCIL_SUBSTITUTION_MODELS = ``seat:runner:model,seat:model,...``.
+
+    Two forms per entry:
+      - ``seat:runner:model``   → run the named seat through ``runner`` with ``model``
+      - ``seat:model``          → run the named seat through the default donor with ``model``
+
+    Invalid entries are dropped with a warning; an empty / missing var returns None.
+    """
+    raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
+    if not raw.strip():
+        return None
+    out: dict[str, tuple[str | None, str]] = {}
+    for entry in raw.split(","):
+        parts = [p.strip() for p in entry.strip().split(":")]
+        if len(parts) == 3 and all(parts):
+            seat, runner, model = parts
+            out[seat.lower()] = (runner.lower(), model)
+        elif len(parts) == 2 and all(parts):
+            seat, model = parts
+            out[seat.lower()] = (None, model)
+        elif entry.strip():  # malformed but non-empty → warn
+            print(
+                f"[WARNING] COUNCIL_SUBSTITUTION_MODELS entry {entry!r} is not "
+                f"'seat:runner:model' or 'seat:model'; skipped",
+                file=sys.stderr,
+                flush=True,
+            )
+    return out or None
+
+
 def load_config() -> OwlexConfig:
     """Load configuration from environment variables."""
     codex = CodexConfig(
-        bypass_approvals=os.environ.get("CODEX_BYPASS_APPROVALS", "false").lower() == "true",
-        clean_output=os.environ.get("CODEX_CLEAN_OUTPUT", "true").lower() == "true",
-        enable_search=os.environ.get("CODEX_ENABLE_SEARCH", "true").lower() == "true",
+        bypass_approvals=_get_bool("CODEX_BYPASS_APPROVALS", False),
+        clean_output=_get_bool("CODEX_CLEAN_OUTPUT", True),
+        enable_search=_get_bool("CODEX_ENABLE_SEARCH", True),
     )
 
     gemini = GeminiConfig(
-        yolo_mode=os.environ.get("GEMINI_YOLO_MODE", "false").lower() == "true",
-        clean_output=os.environ.get("GEMINI_CLEAN_OUTPUT", "true").lower() == "true",
+        yolo_mode=_get_bool("GEMINI_YOLO_MODE", False),
+        clean_output=_get_bool("GEMINI_CLEAN_OUTPUT", True),
         fallback_runner=os.environ.get("GEMINI_FALLBACK_RUNNER", "cursor"),
-        fallback_model=os.environ.get("GEMINI_FALLBACK_MODEL") or None,
+        fallback_model=_get_str_or_none("GEMINI_FALLBACK_MODEL"),
     )
 
     opencode = OpenCodeConfig(
-        model=os.environ.get("OPENCODE_MODEL") or None,
+        model=_get_str_or_none("OPENCODE_MODEL"),
         agent=os.environ.get("OPENCODE_AGENT", "plan"),  # Default to read-only plan agent
-        json_output=os.environ.get("OPENCODE_JSON_OUTPUT", "false").lower() == "true",
-        clean_output=os.environ.get("OPENCODE_CLEAN_OUTPUT", "true").lower() == "true",
+        json_output=_get_bool("OPENCODE_JSON_OUTPUT", False),
+        clean_output=_get_bool("OPENCODE_CLEAN_OUTPUT", True),
     )
 
     claudeor = ClaudeORConfig(
-        api_key=os.environ.get("OPENROUTER_API_KEY") or os.environ.get("CLAUDEOR_API_KEY") or None,
-        model=os.environ.get("CLAUDEOR_MODEL") or None,
-        clean_output=os.environ.get("CLAUDEOR_CLEAN_OUTPUT", "true").lower() == "true",
+        api_key=_get_str_or_none("OPENROUTER_API_KEY") or _get_str_or_none("CLAUDEOR_API_KEY"),
+        model=_get_str_or_none("CLAUDEOR_MODEL"),
+        clean_output=_get_bool("CLAUDEOR_CLEAN_OUTPUT", True),
     )
 
     aichat = AiChatConfig(
-        model=os.environ.get("AICHAT_MODEL") or None,
-        clean_output=os.environ.get("AICHAT_CLEAN_OUTPUT", "true").lower() == "true",
+        model=_get_str_or_none("AICHAT_MODEL"),
+        clean_output=_get_bool("AICHAT_CLEAN_OUTPUT", True),
     )
 
     cursor = CursorConfig(
-        model=os.environ.get("CURSOR_MODEL") or None,
-        force_mode=os.environ.get("CURSOR_FORCE_MODE", "false").lower() == "true",
-        clean_output=os.environ.get("CURSOR_CLEAN_OUTPUT", "true").lower() == "true",
+        model=_get_str_or_none("CURSOR_MODEL"),
+        force_mode=_get_bool("CURSOR_FORCE_MODE", False),
+        clean_output=_get_bool("CURSOR_CLEAN_OUTPUT", True),
     )
-
-    # Parse council exclude agents (comma-separated list)
-    exclude_raw = os.environ.get("COUNCIL_EXCLUDE_AGENTS", "")
-    exclude_agents = frozenset(
-        agent.strip().lower()
-        for agent in exclude_raw.split(",")
-        if agent.strip()
-    )
-    # Parse default team (None if not set or empty)
-    default_team = os.environ.get("COUNCIL_DEFAULT_TEAM", "").strip() or None
-    # Parse Claude opinion setting
-    include_claude_opinion = os.environ.get("COUNCIL_CLAUDE_OPINION", "false").lower() == "true"
-    donors_raw = os.environ.get("COUNCIL_SUBSTITUTION_DONORS", "codex,cursor")
-    substitution_donors = tuple(d.strip().lower() for d in donors_raw.split(",") if d.strip())
-
-    # Parse per-seat substitution overrides: "seat:runner:model" or "seat:model" (uses default donor)
-    # Examples: "opencode:cursor:grok-4-20,claudeor:codex:gpt-5.3-codex"
-    #           "opencode:grok-4-20" (uses first donor from substitution_donors)
-    sub_models_raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
-    substitution_models = None
-    if sub_models_raw.strip():
-        substitution_models = {}
-        for entry in sub_models_raw.split(","):
-            parts = [p.strip() for p in entry.strip().split(":")]
-            if len(parts) == 3:
-                seat, runner, model = parts
-                substitution_models[seat.lower()] = (runner.lower(), model)
-            elif len(parts) == 2:
-                seat, model = parts
-                substitution_models[seat.lower()] = (None, model)  # None = use default donor
 
     council = CouncilConfig(
-        exclude_agents=exclude_agents,
-        default_team=default_team,
-        include_claude_opinion=include_claude_opinion,
-        substitution_donors=substitution_donors,
-        substitution_models=substitution_models,
+        exclude_agents=frozenset(_get_csv("COUNCIL_EXCLUDE_AGENTS")),
+        default_team=_get_str_or_none("COUNCIL_DEFAULT_TEAM"),
+        include_claude_opinion=_get_bool("COUNCIL_CLAUDE_OPINION", False),
+        substitution_donors=_get_csv("COUNCIL_SUBSTITUTION_DONORS", default=("codex", "cursor")),
+        substitution_models=_load_substitution_models(),
     )
-
-    try:
-        timeout = int(os.environ.get("OWLEX_DEFAULT_TIMEOUT", "300"))
-        if timeout <= 0:
-            print(f"[WARNING] OWLEX_DEFAULT_TIMEOUT must be positive, using default 300", file=sys.stderr)
-            timeout = 300
-    except ValueError:
-        print(f"[WARNING] Invalid OWLEX_DEFAULT_TIMEOUT value, using default 300", file=sys.stderr)
-        timeout = 300
 
     return OwlexConfig(
         codex=codex,
@@ -188,7 +246,7 @@ def load_config() -> OwlexConfig:
         aichat=aichat,
         cursor=cursor,
         council=council,
-        default_timeout=timeout,
+        default_timeout=_get_int("OWLEX_DEFAULT_TIMEOUT", 300, min_value=1),
     )
 
 

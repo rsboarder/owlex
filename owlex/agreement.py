@@ -45,13 +45,12 @@ async def score_agreement(
     if len(responses) < 2:
         return 5.0, "Single response"
 
-    # Build the prompt with anonymous labels
-    labels = "ABCDEFGHIJ"
+    # Build the prompt with anonymous labels via the shared helper.
+    from .anonymize import assign_labels
+
+    by_label, _ = assign_labels(list(responses.items()))
     response_parts = []
-    items = list(responses.items())
-    for i, (_, content) in enumerate(items):
-        label = labels[i] if i < len(labels) else str(i + 1)
-        # Truncate long responses to keep judge fast
+    for label, content in by_label.items():
         truncated = content[:2000] if len(content) > 2000 else content
         response_parts.append(f"RESPONSE {label}:\n{truncated}")
 

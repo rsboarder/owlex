@@ -49,6 +49,42 @@ DELIBERATION_INSTRUCTION_CRITIQUE = (
 )
 
 
+def anonymize_round_responses(round_data, *, salt: str | None = None):
+    """Shuffle a CouncilRound's per-agent responses and assign letter labels.
+
+    Returns ``(by_label, label_to_agent)`` where:
+      - ``by_label`` maps letter ('A', 'B', ...) -> the original AgentResponse object
+      - ``label_to_agent`` maps letter -> agent seat name ('codex', 'gemini', ...)
+
+    Ordering is randomized when ``salt`` is provided (deterministic per-salt so
+    R1 and R2 share a mapping). When ``salt`` is None the call falls back to
+    Python's global ``random.shuffle`` via the shared anonymizer helper.
+
+    Returns (None, None) when round_data is None.
+    """
+    if round_data is None:
+        return None, None
+    from .anonymize import assign_labels
+    from .models import Agent
+
+    pairs: list[tuple[str, object]] = []
+    for agent_name in Agent:
+        ar = getattr(round_data, agent_name.value, None)
+        if ar is not None:
+            pairs.append((agent_name.value, ar))
+
+    # Always shuffle for R2 anonymity. When no salt, generate one off process
+    # randomness so the call still produces a deterministic-per-call mapping.
+    effective_salt = salt if salt is not None else _random_salt()
+    return assign_labels(pairs, salt=effective_salt)
+
+
+def _random_salt() -> str:
+    """Generate a non-deterministic salt for one-off shuffles."""
+    import secrets
+    return secrets.token_hex(8)
+
+
 def build_deliberation_prompt(
     original_prompt: str,
     codex_answer: str | None = None,
@@ -73,7 +109,7 @@ def build_deliberation_prompt(
     When include_original=True (used for exec fallback when session resume fails),
     the original prompt is included so the agent has full context.
     """
-    import random
+    from .anonymize import assign_labels
 
     if critique:
         intro = DELIBERATION_INTRO_CRITIQUE
@@ -87,24 +123,23 @@ def build_deliberation_prompt(
     if include_original and original_prompt:
         parts.extend(["", "ORIGINAL QUESTION:", original_prompt])
 
-    # Collect all answers, anonymize, and randomize order
-    answers = []
-    all_named = {
-        "codex": codex_answer, "gemini": gemini_answer, "opencode": opencode_answer,
-        "claudeor": claudeor_answer, "aichat": aichat_answer, "cursor": cursor_answer,
-    }
-    for answer in all_named.values():
+    # Collect all named answers, then anonymize via the shared helper.
+    pairs: list[tuple[str, str]] = []
+    for seat, answer in (
+        ("codex", codex_answer),
+        ("gemini", gemini_answer),
+        ("opencode", opencode_answer),
+        ("claudeor", claudeor_answer),
+        ("aichat", aichat_answer),
+        ("cursor", cursor_answer),
+    ):
         if answer:
-            answers.append(answer)
-
+            pairs.append((seat, answer))
     if claude_answer:
-        answers.append(claude_answer)
+        pairs.append(("claude", claude_answer))
 
-    random.shuffle(answers)
-
-    labels = "ABCDEFGHIJ"
-    for i, answer in enumerate(answers):
-        label = labels[i] if i < len(labels) else str(i + 1)
+    by_label, _ = assign_labels(pairs, salt=_random_salt())
+    for label, answer in by_label.items():
         parts.extend(["", f"RESPONSE {label}:", answer])
 
     parts.extend(["", instruction])

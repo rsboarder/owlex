@@ -40,8 +40,8 @@ class TestConfigParsing:
             importlib.reload(config_module)
 
             assert config_module.config.default_timeout == 300
-            captured = capsys.readouterr()
-            assert "must be positive" in captured.err
+            # Behavior assertion: a warning was emitted (don't pin exact text)
+            assert "WARNING" in capsys.readouterr().err
 
     def test_default_timeout_zero(self, capsys):
         """Should fallback to 300 for zero."""
@@ -51,8 +51,8 @@ class TestConfigParsing:
             importlib.reload(config_module)
 
             assert config_module.config.default_timeout == 300
-            captured = capsys.readouterr()
-            assert "must be positive" in captured.err
+            # Behavior assertion: a warning was emitted (don't pin exact text)
+            assert "WARNING" in capsys.readouterr().err
 
     def test_codex_bypass_approvals_true(self):
         """Should parse CODEX_BYPASS_APPROVALS=true."""
