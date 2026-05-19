@@ -629,10 +629,15 @@ class Council:
 
             model = p.model_override
 
-            async def run(t=task, r=p.runner, pr=agent_prompt, d=display, kw=kwargs, mo=model):
+            async def run(t=task, r=p.runner, pr=agent_prompt, d=display, kw=kwargs, mo=model, tm=timeout):
+                # Thread council-level timeout through to the subprocess. Upstream
+                # change Pass-council-timeout-to-individual-agent-subprocesses
+                # established this contract; engine.run_agent_command treats
+                # timeout <= 0 as "no timeout".
                 await self._engine.run_agent(
                     t, r, mode="exec", prompt=pr,
-                    working_directory=working_directory, model_override=mo, **kw,
+                    working_directory=working_directory, model_override=mo,
+                    timeout=tm or 0, **kw,
                 )
                 elapsed = (datetime.now() - round_start).total_seconds()
                 status = "completed" if t.status == "completed" else "failed"
@@ -769,16 +774,19 @@ class Council:
             async def run_delib(
                 t=task, r=p.runner, s=session,
                 rp=resume_prompt, ep=exec_prompt, d=display, kw=kwargs, mo=model,
+                tm=timeout,
             ):
                 if s:
                     await self._engine.run_agent(
                         t, r, mode="resume", session_ref=s,
-                        prompt=rp, working_directory=working_directory, model_override=mo, **kw,
+                        prompt=rp, working_directory=working_directory, model_override=mo,
+                        timeout=tm or 0, **kw,
                     )
                 else:
                     await self._engine.run_agent(
                         t, r, mode="exec",
-                        prompt=ep, working_directory=working_directory, model_override=mo, **kw,
+                        prompt=ep, working_directory=working_directory, model_override=mo,
+                        timeout=tm or 0, **kw,
                     )
                 elapsed = (datetime.now() - round_start).total_seconds()
                 self.log(f"{d} revised ({elapsed:.1f}s)")
