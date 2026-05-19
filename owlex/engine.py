@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -214,14 +215,25 @@ class TaskEngine:
         store.record_council_round(council_id, round_num, agent_timings)
 
     async def _parse_skills_async(self, task: Task) -> None:
-        """Locate the agent's session file and persist its tool/skill calls."""
+        """Locate the agent's session file and persist its tool/skill calls.
+
+        Dispatches to the parser for ``task.runner`` (the concrete runner that
+        actually executed), not for the seat name. Substituted seats (e.g.
+        claudeor->codex) thus look in ``~/.codex/sessions``, not
+        ``~/.claude/projects`` — preventing the parent Claude Code session's
+        tool calls from being mis-attributed to the council task.
+        """
         try:
-            # Lazy import — keeps engine importable without dashboard deps installed.
+            # Lazy import - keeps engine importable without dashboard deps installed.
             from .dashboard.parsers import parse_and_persist
-            agent, _ = self._derive_agent_and_round(task.command)
+            seat, _ = self._derive_agent_and_round(task.command)
+            runner = task.runner or seat
             ts = (task.completion_time or task.start_time).isoformat()
-            # Run in a thread so file I/O doesn't block the event loop.
-            await asyncio.to_thread(parse_and_persist, task.task_id, agent, ts, None)
+            await asyncio.to_thread(
+                parse_and_persist,
+                task.task_id, seat, ts, None,
+                runner=runner,
+            )
         except Exception as e:
             print(f"[owlex] skill parse failed for {task.task_id[:8]}: {e}", file=sys.stderr, flush=True)
 
@@ -241,10 +253,19 @@ class TaskEngine:
     async def _emit_task_notification(self, task: Task):
         """Emit task completion/failure notification and persist the terminal row."""
         store.record_task_complete(task)
-        # Fire-and-forget skill/tool parsing so the dashboard span-tree fills in
-        # immediately. Best-effort: never block completion on it.
+        # Skill parsing is a derivation: hand off to the long-lived worker via
+        # the events queue. The worker survives this MCP request, so the parse
+        # can't be cancelled by event-loop shutdown when the council finishes
+        # fast (R1 consensus → R2 skipped → response returns immediately).
         try:
-            asyncio.create_task(self._parse_skills_async(task))
+            from . import derivations as _derivations
+            seat, _round = self._derive_agent_and_round(task.command)
+            _derivations.emit(_derivations.SkillsEvent(
+                task_id=task.task_id,
+                seat=seat,
+                runner=task.runner or seat,
+                ts=(task.completion_time or task.start_time).isoformat(),
+            ))
         except Exception:
             pass
         if not task.context:
@@ -263,6 +284,47 @@ class TaskEngine:
     # Notification throttle: max 1 notification per second per stream reader
     _NOTIFICATION_MIN_INTERVAL = 1.0
 
+    # Per-stream output cap. Subprocess is killed if any single stream emits
+    # more than this many bytes - a circuit breaker for runaway tool output
+    # (rg recursing into pnpm node_modules, minified single-line bundles)
+    # that drowns the runner without forward progress.
+    _DEFAULT_MAX_STREAM_BYTES = 25_000_000
+
+    @classmethod
+    def _max_stream_bytes(cls) -> int:
+        try:
+            v = int(os.environ.get('OWLEX_AGENT_MAX_OUTPUT_BYTES', '') or 0)
+            return v if v > 0 else cls._DEFAULT_MAX_STREAM_BYTES
+        except ValueError:
+            return cls._DEFAULT_MAX_STREAM_BYTES
+
+    async def _stall_heartbeat(self, task: 'Task', interval_s: float = 30.0) -> None:
+        """Periodic instrumentation: log task progress every interval_s.
+
+        Emits to stderr (which is teed to ~/.owlex/logs/server-{pid}.log) so
+        we can post-mortem whether a stuck agent was producing output slowly,
+        was idle for a long stretch, or was making no progress at all.
+        Cancelled by ``run_agent_command`` when the subprocess exits.
+        """
+        loop_started = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(interval_s)
+                now = time.monotonic()
+                last = task.last_output_monotonic
+                idle = (now - last) if last is not None else (now - loop_started)
+                lines_n = len(task.output_lines) if task.output_lines is not None else 0
+                running_for = now - loop_started
+                tag = task.task_id[:8] if task.task_id else '????????'
+                cmd = (task.command or '?')[:24]
+                print(
+                    f'[heartbeat] {tag} {cmd} running={running_for:.0f}s '
+                    f'idle={idle:.0f}s lines={lines_n}',
+                    file=sys.stderr, flush=True,
+                )
+        except asyncio.CancelledError:
+            return
+
     async def _read_stream_lines(
         self,
         stream: asyncio.StreamReader,
@@ -280,6 +342,8 @@ class TaskEngine:
         """
         lines = []
         last_notify_time = 0.0
+        bytes_read = 0
+        max_bytes = self._max_stream_bytes()
         import time
         while True:
             try:
@@ -287,10 +351,27 @@ class TaskEngine:
                 if not line:
                     break
                 decoded = line.decode('utf-8', errors='replace').rstrip('\n\r')
+                bytes_read += len(line)
+                task.last_output_monotonic = time.monotonic()
                 lines.append(decoded)
                 task.output_lines.append(f"[{stream_name}] {decoded}")
-                # Kill process immediately on fatal pattern match
+                if bytes_read > max_bytes:
+                    msg = (f'{stream_name} exceeded output cap '
+                           f'({bytes_read} > {max_bytes} bytes); killing subprocess')
+                    print(f'[owlex.engine] {task.task_id[:8]} {msg}', file=sys.stderr, flush=True)
+                    if not task.error:
+                        task.error = msg
+                    if task.process and task.process.returncode is None:
+                        task.process.kill()
+                    break
+                # Kill process immediately on fatal pattern match.
+                # Stash which pattern fired AND a snapshot of stderr-vs-stdout
+                # state so the post-exit handler can recover a completed
+                # answer if the agent only died after writing its result
+                # (e.g. gemini hits MODEL_CAPACITY_EXHAUSTED on an internal
+                # follow-up call AFTER the main answer is already in stdout).
                 if fail_patterns and any(p in decoded for p in fail_patterns):
+                    task._fail_pattern_matched = decoded  # type: ignore[attr-defined]
                     if task.process and task.process.returncode is None:
                         task.process.kill()
                     break
@@ -423,6 +504,7 @@ class TaskEngine:
                         fail_patterns=agent_cmd.fail_patterns,
                     )
                 )
+                heartbeat_task = asyncio.create_task(self._stall_heartbeat(task))
 
                 try:
                     async def read_with_timeout():
@@ -434,12 +516,14 @@ class TaskEngine:
                         read_with_timeout(),
                         timeout=timeout
                     )
+                    heartbeat_task.cancel()
                 except asyncio.TimeoutError:
                     # Cancel reader tasks explicitly to prevent zombie tasks
                     stdout_task.cancel()
                     stderr_task.cancel()
+                    heartbeat_task.cancel()
                     try:
-                        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+                        await asyncio.gather(stdout_task, stderr_task, heartbeat_task, return_exceptions=True)
                     except Exception:
                         pass
                     # Graceful termination: SIGTERM first, then SIGKILL
@@ -452,6 +536,7 @@ class TaskEngine:
                     return
             else:
                 # Non-streaming mode: use communicate() which handles stdin internally
+                heartbeat_task = asyncio.create_task(self._stall_heartbeat(task))
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         process.communicate(input=prompt.encode('utf-8') if prompt else None),
@@ -459,7 +544,9 @@ class TaskEngine:
                     )
                     stdout_text = stdout.decode('utf-8', errors='replace') if stdout else ""
                     stderr_text = stderr.decode('utf-8', errors='replace') if stderr else ""
+                    heartbeat_task.cancel()
                 except asyncio.TimeoutError:
+                    heartbeat_task.cancel()
                     # Graceful termination: SIGTERM first, then SIGKILL
                     await self._terminate_process(process)
                     task.status = TaskStatus.FAILED.value
@@ -485,8 +572,37 @@ class TaskEngine:
                     error_output.append(f"stdout:\n{stdout_text}")
                 if stderr_text.strip():
                     error_output.append(f"stderr:\n{stderr_text}")
+
+                # Recover when fail_patterns killed the process AFTER the agent
+                # already produced a complete answer (gemini-CLI's pattern:
+                # finishes the answer, then hits a 429 retry on an internal
+                # follow-up call and stderr matches MODEL_CAPACITY_EXHAUSTED).
+                # In that case the orchestrator should treat the call as
+                # completed and stash the pattern hit as a warning.
+                fail_pattern_hit = getattr(task, '_fail_pattern_matched', None)
+                if fail_pattern_hit and stdout_text.strip():
+                    cleaned_output = output_cleaner(stdout_text, prompt)
+                    task.result = f"{output_prefix}:\n\n{cleaned_output}"
+                    task.warnings = (
+                        f"recovered after fail_pattern hit: {fail_pattern_hit[:200]}\n"
+                        f"(stderr was non-empty; full text in last_lines)"
+                    )
+                    task.status = TaskStatus.COMPLETED.value
+                    task.completion_time = datetime.now()
+                    print(
+                        f"[owlex.engine] {task.task_id[:8]} recovered completed answer "
+                        f"despite fail_pattern kill ({len(stdout_text)} chars stdout)",
+                        file=sys.stderr, flush=True,
+                    )
+                    await self._emit_task_notification(task)
+                    return
+
                 task.status = TaskStatus.FAILED.value
-                task.error = f"{command[0]} failed (exit code {process.returncode}):\n\n" + ("\n\n".join(error_output) or "No output")
+                # If the readers killed the subprocess for exceeding the
+                # output cap, task.error is already set with a precise
+                # reason - don't clobber it with a generic exit-code msg.
+                if not (task.error and 'exceeded output cap' in task.error):
+                    task.error = f"{command[0]} failed (exit code {process.returncode}):\n\n" + ("\n\n".join(error_output) or "No output")
                 task.completion_time = datetime.now()
                 await self._emit_task_notification(task)
 
@@ -574,6 +690,7 @@ class TaskEngine:
         else:
             raise ValueError(f"Invalid mode: {mode}. Must be 'exec' or 'resume'")
 
+        task.runner = runner.name
         await self.run_agent_command(task, agent_cmd, timeout=timeout)
 
         # Apply output cleaner to result

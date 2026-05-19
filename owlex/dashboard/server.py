@@ -149,68 +149,25 @@ def _wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float
 
 @app.get("/api/leaderboard")
 def leaderboard(since: str | None = None) -> dict:
-    """Per-agent ranked stats with Wilson CIs and 7d activity sparkline."""
-    where, args = "WHERE status != 'running'", []
-    if since:
-        where += " AND COALESCE(completed_at, started_at) >= ?"
-        args.append(since)
+    """Per-agent ranked stats with Wilson CIs and 7d activity sparkline.
 
-    rows = _conn().execute(
-        f"""SELECT agent,
-                   COUNT(*)                                            AS total,
-                   SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
-                   SUM(CASE WHEN status='failed'    THEN 1 ELSE 0 END) AS failed
-              FROM calls {where}
-             GROUP BY agent""",
-        args,
-    ).fetchall()
+    Backed by ``CallRepository.list_aggregated_by_agent``: 5 grouped queries
+    total instead of the previous 4 queries per agent.
+    """
+    from ..adapters.repositories.container import default as default_repos
+    aggregated = default_repos().calls.list_aggregated_by_agent(since=since)
 
     out = []
-    for r in rows:
-        agent = r["agent"]
-        durations = [
-            x["duration_s"]
-            for x in _conn().execute(
-                f"SELECT duration_s FROM calls WHERE agent=? AND status='completed' AND duration_s IS NOT NULL "
-                f"{('AND COALESCE(completed_at, started_at) >= ?' if since else '')}",
-                ([agent, since] if since else [agent]),
-            ).fetchall()
-        ]
-        durations.sort()
+    for r in aggregated:
+        durations = r["durations"]  # already sorted ascending
         n = len(durations)
         p50 = durations[n // 2] if n else 0.0
         p95 = durations[int(0.95 * (n - 1))] if n else 0.0
         lo, hi = _wilson_interval(r["completed"] or 0, r["total"] or 0)
-
-        # Mean pairwise agreement involving this agent
-        agreement = _conn().execute(
-            "SELECT AVG(score) FROM pairwise_agreements WHERE agent_a = ? OR agent_b = ?",
-            (agent, agent),
-        ).fetchone()[0]
-
-        # Blind rating average (-1..+1) from claude_blind ratings.
-        blind_row = _conn().execute(
-            "SELECT AVG(score) AS avg, COUNT(*) AS n FROM agent_scores "
-            "WHERE agent = ? AND rater = 'claude_blind'",
-            (agent,),
-        ).fetchone()
-        blind_avg = blind_row["avg"]
-        blind_n = blind_row["n"] or 0
-
-        # 7-day spark (call counts per day)
-        spark_rows = _conn().execute(
-            """SELECT substr(started_at, 1, 10) AS day, COUNT(*) AS c
-                 FROM calls
-                WHERE agent = ?
-                  AND started_at >= date('now', '-7 days')
-                GROUP BY day
-                ORDER BY day ASC""",
-            (agent,),
-        ).fetchall()
-        spark = [{"day": r2["day"], "calls": r2["c"]} for r2 in spark_rows]
-
+        agreement = r["agreement_score"]
+        blind_avg = r["blind_rating_avg"]
         out.append({
-            "agent": agent,
+            "agent": r["agent"],
             "total": r["total"],
             "completed": r["completed"],
             "failed": r["failed"],
@@ -221,8 +178,8 @@ def leaderboard(since: str | None = None) -> dict:
             "p95_s": round(p95, 2),
             "agreement_score": round(agreement, 2) if agreement is not None else None,
             "blind_rating_avg": round(blind_avg, 3) if blind_avg is not None else None,
-            "blind_rating_n": blind_n,
-            "spark": spark,
+            "blind_rating_n": r["blind_rating_n"],
+            "spark": r["spark"],
         })
 
     out.sort(key=lambda r: (-(r.get("agreement_score") or -1), -r["success_pct"]))

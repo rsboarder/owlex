@@ -144,6 +144,15 @@ class GeminiRunner(AgentRunner):
     def capacity_fail_patterns(self) -> list[str]:
         return GEMINI_FAIL_PATTERNS
 
+    # Bypass the workspace-trust check introduced in gemini-cli 0.39.1
+    # (CVSS 10.0 RCE patch GHSA-wpqr-6v78-jr5g). Without this env var, headless
+    # invocation downgrades --approval-mode=yolo to "default" and exits 55
+    # with "Gemini CLI is not running in a trusted directory". The `--skip-trust`
+    # CLI flag exists in docs but is rejected by yargs on 0.38+, so the env var
+    # is the only working bypass for non-interactive runs.
+    # Docs: https://geminicli.com/docs/cli/trusted-folders/#headless-and-automated-environments
+    _TRUST_ENV: dict[str, str] = {"GEMINI_CLI_TRUST_WORKSPACE": "true"}
+
     def build_exec_command(
         self,
         prompt: str,
@@ -171,6 +180,7 @@ class GeminiRunner(AgentRunner):
             not_found_hint="Please ensure Gemini CLI is installed (npm install -g @google/gemini-cli).",
             stream=True,
             fail_patterns=GEMINI_FAIL_PATTERNS,
+            env_overrides=self._TRUST_ENV,
         )
 
     def build_resume_command(
@@ -201,6 +211,7 @@ class GeminiRunner(AgentRunner):
             not_found_hint="Please ensure Gemini CLI is installed (npm install -g @google/gemini-cli).",
             stream=False,  # Resume uses non-streaming mode
             fail_patterns=GEMINI_FAIL_PATTERNS,
+            env_overrides=self._TRUST_ENV,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

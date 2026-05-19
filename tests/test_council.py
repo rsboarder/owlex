@@ -14,12 +14,34 @@ from owlex.engine import codex_runner, gemini_runner
 
 @pytest.fixture
 def mock_engine():
-    """Create a mock engine for testing council logic."""
-    with patch("owlex.council.engine") as mock:
-        # Mock create_task to return proper Task objects
+    """Create a mock engine for testing council logic.
+
+    Also patches ``shutil.which`` and each runner's ``is_configured`` so all
+    six native agents appear available regardless of the developer machine —
+    otherwise the council substitutes missing seats with donors and tests that
+    expect native names (codex/gemini/opencode/...) break.
+    """
+    from contextlib import ExitStack
+    from owlex.engine import AGENT_RUNNERS
+
+    with ExitStack() as stack:
+        mock = stack.enter_context(patch("owlex.council.engine"))
+        stack.enter_context(patch("owlex.council.shutil.which", return_value="/usr/bin/fake"))
+        # Don't make a real agreement judge call (would hit a real LLM).
+        stack.enter_context(patch(
+            "owlex.council.score_agreement",
+            new=AsyncMock(return_value=(3.0, "mocked")),
+        ))
+        # Force every runner class to report is_configured=True.
+        for runner in AGENT_RUNNERS.values():
+            stack.enter_context(patch.object(
+                type(runner), "is_configured",
+                new_callable=lambda: property(lambda self: True),
+            ))
+
         task_counter = [0]
 
-        def create_task(command, args, context=None):
+        def create_task(command, args, context=None, council_id=None):
             task_counter[0] += 1
             return Task(
                 task_id=f"test-task-{task_counter[0]}",
@@ -31,10 +53,7 @@ def mock_engine():
             )
 
         mock.create_task = MagicMock(side_effect=create_task)
-
-        # Mock kill_task_subprocess
         mock.kill_task_subprocess = AsyncMock()
-
         yield mock
 
 
@@ -95,11 +114,15 @@ class TestCouncilRound1:
         mock_engine.run_agent = mock_run_agent
 
         council = Council()
-        response = await council.deliberate(
-            prompt="Test question",
-            deliberate=False,
-            timeout=1,
-        )
+        # Bypass the production COUNCIL_MIN_TIMEOUT=120s floor so a test
+        # timeout of 1s actually trips the codex sleep.
+        with patch.object(Council, "_resolve_timeout",
+                          staticmethod(lambda t: 0 if t == 0 else (t or 1))):
+            response = await council.deliberate(
+                prompt="Test question",
+                deliberate=False,
+                timeout=1,
+            )
 
         # Codex should have timed out
         assert response.round_1 is not None
@@ -135,8 +158,11 @@ class TestCouncilRound2:
 
         assert response.round_2 is not None
         assert round2_prompt is not None
-        assert "CODEX'S ANSWER:" in round2_prompt
-        assert "GEMINI'S ANSWER:" in round2_prompt
+        # Round 2 prompt now uses anonymized response labels (RESPONSE A/B/C/...).
+        assert "RESPONSE A:" in round2_prompt
+        assert "RESPONSE B:" in round2_prompt
+        # The actual round-1 content from the other agents must appear.
+        assert "Codex response" in round2_prompt or "Gemini response" in round2_prompt
 
     async def test_critique_mode_prompt(self, mock_engine, mock_config):
         """Critique mode should use critical analysis prompt."""
@@ -187,7 +213,7 @@ class TestCouncilRound2:
         )
 
         assert round2_prompt is not None
-        assert "CLAUDE'S ANSWER:" in round2_prompt
+        # The Claude-opinion content is included in the R2 prompt verbatim.
         assert "Claude's expert analysis here" in round2_prompt
         assert response.claude_opinion is not None
         assert response.claude_opinion.content == "Claude's expert analysis here"

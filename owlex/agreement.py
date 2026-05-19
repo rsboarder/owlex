@@ -9,7 +9,57 @@ import re
 import sys
 
 
-AGREEMENT_MODEL = "gemini-2.5-flash"
+AGREEMENT_MODEL = __import__("os").getenv("OWLEX_AGREEMENT_MODEL", "gemini-3-flash")
+
+# Default per-call timeout for the cursor-agent judge subprocess. Bumped from
+# the historical 30s after cursor-agent CLI v2026.05.16 started buffering
+# output for 30-60s before emitting any tokens on council-sized prompts. A
+# 30s wall was firing on the prompt-think phase rather than on real failure.
+# Override via env when Cursor performance changes again.
+DEFAULT_JUDGE_TIMEOUT = int(__import__("os").getenv("OWLEX_AGREEMENT_TIMEOUT", "90"))
+
+
+async def probe_agreement_model(timeout: float = 10.0) -> tuple[bool, str]:
+    """Startup health-check: verify the configured AGREEMENT_MODEL is reachable.
+
+    External CLI catalogs (cursor-agent's catalog in particular) rotate
+    frequently — a model name that worked last week may be 404 today, and
+    owlex silently fell back to overlap-heuristic for weeks before anyone
+    noticed. This probe runs once at server start and prints a clear warning
+    to stderr (teed to the log file) if the model is gone.
+
+    Returns ``(ok, message)``. Never raises — health-check failure must not
+    block server startup; the judge will fall back to overlap-heuristic at
+    council time.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "agent", "--print", "--output-format", "text", "--trust",
+            "--model", AGREEMENT_MODEL,
+            "Reply with one word: OK",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return False, f"agreement model probe timed out after {timeout}s (model={AGREEMENT_MODEL!r})"
+    except FileNotFoundError:
+        return False, "cursor-agent CLI not found on PATH; agreement judge will fallback to heuristic"
+    except Exception as e:
+        return False, f"agreement model probe error: {e}"
+
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        # Common shape: "Cannot use this model: X. Available models: ..."
+        if "Cannot use this model" in err:
+            return False, (
+                f"agreement model {AGREEMENT_MODEL!r} not in cursor-agent catalog. "
+                f"Override via OWLEX_AGREEMENT_MODEL. cursor stderr head: {err[:200]}"
+            )
+        return False, f"agreement model probe exit {proc.returncode}: {err[:200]}"
+
+    return True, f"agreement model {AGREEMENT_MODEL!r} probed ok"
+
 
 AGREEMENT_PROMPT = """\
 You are judging whether multiple AI advisors agree on a software engineering question.
@@ -34,7 +84,7 @@ Respond with ONLY a JSON object:
 async def score_agreement(
     question: str,
     responses: dict[str, str],
-    timeout: int = 30,
+    timeout: int | None = None,
 ) -> tuple[float, str]:
     """
     Score agreement between agent responses using Cursor CLI + gemini-2.5-flash.
@@ -44,6 +94,11 @@ async def score_agreement(
     """
     if len(responses) < 2:
         return 5.0, "Single response"
+
+    # Resolve timeout from explicit arg → env-configurable default. Read at
+    # call time, not module load, so tests can monkeypatch via env.
+    if timeout is None:
+        timeout = DEFAULT_JUDGE_TIMEOUT
 
     # Build the prompt with anonymous labels via the shared helper.
     from .anonymize import assign_labels

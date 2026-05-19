@@ -188,6 +188,10 @@ class TestAsyncSessionParsing:
             def name(self):
                 return "test"
 
+            @property
+            def cli_command(self):
+                return "test"
+
             def build_exec_command(self, prompt, **kwargs):
                 pass
 

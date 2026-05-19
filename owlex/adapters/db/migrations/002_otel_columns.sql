@@ -1,0 +1,4 @@
+ALTER TABLE calls ADD COLUMN model TEXT;
+ALTER TABLE calls ADD COLUMN input_tokens INTEGER;
+ALTER TABLE calls ADD COLUMN output_tokens INTEGER;
+ALTER TABLE calls ADD COLUMN finish_reason TEXT;

@@ -18,6 +18,7 @@ from .agreement import score_agreement
 from .config import config
 from .context import gather_context
 from .engine import engine, build_agent_response, AGENT_RUNNERS
+from .ports import EnginePort
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
 from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver, BUILTIN_ROLES
 from .models import (
@@ -74,11 +75,11 @@ class Council:
     def __init__(
         self,
         context: Any = None,
-        task_engine: Any = None,
+        task_engine: "EnginePort | None" = None,
         role_resolver: RoleResolver | None = None,
     ):
         self.context = context
-        self._engine = task_engine if task_engine is not None else engine
+        self._engine: EnginePort = task_engine if task_engine is not None else engine
         self._resolver = role_resolver if role_resolver is not None else get_resolver()
         self.log_entries: list[str] = []
         self.council_id: str = datetime.now().strftime("%H%M%S")
@@ -154,7 +155,7 @@ class Council:
             subs = []
             for i, seat in enumerate(unavailable):
                 override = sub_overrides.get(seat)
-                if override:
+                if override and len(override) == 2:
                     runner_name, model = override
                     # Use specified runner, or fall back to first donor
                     donor = runner_name if runner_name and runner_name in available else (donor_pool[0] if donor_pool else None)
@@ -203,46 +204,58 @@ class Council:
         roles: RoleSpec = None,
         team: str | None = None,
     ) -> CouncilResponse:
-        """
-        Run a council deliberation session.
-
-        Args:
-            prompt: The question or task to deliberate on
-            working_directory: Working directory context for agents (defaults to CWD)
-            claude_opinion: Optional Claude opinion to share with agents
-            deliberate: If True, run a second round where agents see each other's answers
-            critique: If True, Round 2 asks agents to find flaws instead of revise
-            timeout: Timeout per agent in seconds
-            roles: Role specification - dict, list, or None (see RoleSpec)
-            team: Team preset name (alternative to roles parameter)
-
-        Returns:
-            CouncilResponse with all rounds and metadata
-
-        Raises:
-            ValueError: If both roles and team are specified
-        """
+        """Run a council deliberation session. See module helpers for stages."""
         if roles is not None and team is not None:
             raise ValueError("Cannot specify both 'roles' and 'team' parameters. Use one or the other.")
 
+        effective_timeout = self._resolve_timeout(timeout)
+        if working_directory is None:
+            working_directory = os.getcwd()
+        participants = self.build_participants(roles if roles is not None else team)
+
+        council_start = datetime.now()
+        await self._announce_roles(participants)
+        project_context = await self._gather_project_context(working_directory, prompt)
+
+        round_1 = await self._do_round_1(prompt, working_directory, effective_timeout, participants, project_context, claude_opinion)
+        r1_contents = self._collect_r1_contents(round_1)
+
+        deliberate, agreement_score, agreement_reason = await self._resolve_deliberation(deliberate, prompt, r1_contents)
+        round_2 = await self._do_round_2_if_needed(deliberate, prompt, working_directory, round_1, claude_opinion, critique, effective_timeout, participants)
+
+        # Off the user-facing critical path: emit derivation events to the
+        # long-lived worker. See owlex/derivations.py — the worker survives
+        # individual MCP requests, so a fast council (R1 consensus → skip R2)
+        # no longer loses pairwise writes to event-loop shutdown.
+        from . import derivations as _derivations
+        _derivations.emit(_derivations.PairwiseEvent(
+            council_id=self.council_id, prompt=prompt, r1_contents=r1_contents,
+        ))
+        if round_2 is not None:
+            _derivations.emit(_derivations.PositionDeltaEvent(
+                round_1=round_1, round_2=round_2,
+            ))
+
+        return self._build_outcome(
+            prompt=prompt, working_directory=working_directory,
+            round_1=round_1, round_2=round_2, participants=participants,
+            council_start=council_start, deliberate=deliberate, critique=critique,
+            agreement_score=agreement_score, agreement_reason=agreement_reason,
+            claude_opinion=claude_opinion,
+        )
+
+    # === deliberate() helpers ===
+
+    @staticmethod
+    def _resolve_timeout(timeout: int | None) -> int | None:
         if timeout is None:
             timeout = config.default_timeout
         COUNCIL_MIN_TIMEOUT = 120
         if timeout > 0 and timeout < COUNCIL_MIN_TIMEOUT:
-            self.log(f"Timeout {timeout}s below council minimum, using {COUNCIL_MIN_TIMEOUT}s")
             timeout = COUNCIL_MIN_TIMEOUT
-        effective_timeout = None if timeout == 0 else timeout
+        return None if timeout == 0 else timeout
 
-        if working_directory is None:
-            working_directory = os.getcwd()
-
-        # Build participants (single source of truth for seats, runners, roles)
-        role_spec = roles if roles is not None else team
-        participants = self.build_participants(role_spec)
-
-        council_start = datetime.now()
-
-        # Log role assignments
+    async def _announce_roles(self, participants: list[Participant]) -> None:
         role_msgs = [
             f"{_display_name(p)}: {p.role.name}"
             for p in participants
@@ -253,102 +266,101 @@ class Council:
             self.log(f"Roles assigned: {roles_summary}")
             await self.notify(f"Council roles: {roles_summary}", progress=10)
 
-        # === Gather shared context (relevant learnings for this question) ===
-        project_context = await gather_context(working_directory, question=prompt)
-        if project_context:
-            self.log(f"Context gathered: {len(project_context)} chars")
-        else:
-            self.log("No project context found")
+    async def _gather_project_context(self, working_directory: str, prompt: str) -> str | None:
+        ctx = await gather_context(working_directory, question=prompt)
+        self.log(f"Context gathered: {len(ctx)} chars" if ctx else "No project context found")
+        return ctx
 
-        # === Round 1 ===
+    async def _do_round_1(
+        self, prompt, working_directory, timeout, participants, project_context, claude_opinion,
+    ) -> CouncilRound:
         if claude_opinion and claude_opinion.strip():
             self.log(f"Claude's opinion received ({len(claude_opinion)} chars)")
-
         seat_names = [p.seat.title() for p in participants]
         self.log(f"Round 1: querying {', '.join(seat_names)}...")
         await self.notify(f"Council Round 1: querying {', '.join(seat_names)}", progress=20)
-
-        round_1 = await self._run_round_1(prompt, working_directory, effective_timeout, participants, project_context)
+        round_1 = await self._run_round_1(prompt, working_directory, timeout, participants, project_context)
         await self.notify("Council Round 1 complete", progress=50)
+        return round_1
 
-        # === Round 2 (auto-skip when consensus is high) ===
-        round_2 = None
-        agreement_score: float | None = None
-        agreement_reason: str | None = None
-        # Always collect R1 contents — used by the auto-deliberation gate AND the
-        # post-hoc pairwise agreement matrix below.
-        r1_contents: dict[str, str] = {}
+    @staticmethod
+    def _collect_r1_contents(round_1: CouncilRound) -> dict[str, str]:
+        contents: dict[str, str] = {}
         for agent_name in Agent:
             r1_result = getattr(round_1, agent_name.value, None)
             if r1_result and r1_result.content:
-                r1_contents[agent_name.value] = r1_result.content
+                contents[agent_name.value] = r1_result.content
+        return contents
 
-        if deliberate == "auto":
-            agreement, reason = await score_agreement(prompt, r1_contents)
-            agreement_score, agreement_reason = agreement, reason
-            if agreement >= self.AUTO_DELIBERATION_THRESHOLD:
-                self.log(f"R1 consensus sufficient ({agreement:.1f}/5: {reason}), skipping R2")
-                deliberate = False
-            else:
-                self.log(f"R1 disagreement detected ({agreement:.1f}/5: {reason}), triggering R2")
-                deliberate = True
+    async def _resolve_deliberation(
+        self, deliberate: bool | str, prompt: str, r1_contents: dict[str, str],
+    ) -> tuple[bool, float | None, str | None]:
+        """Auto-mode: score agreement, return (will_deliberate, score, reason)."""
+        if deliberate != "auto":
+            return bool(deliberate), None, None
+        agreement, reason = await score_agreement(prompt, r1_contents)
+        will = agreement < self.AUTO_DELIBERATION_THRESHOLD
+        msg = "R1 disagreement detected" if will else "R1 consensus sufficient"
+        self.log(f"{msg} ({agreement:.1f}/5: {reason}), {'triggering' if will else 'skipping'} R2")
+        return will, agreement, reason
 
-        if deliberate:
-            await self.notify("Council Round 2: deliberation phase", progress=60)
-            round_2 = await self._run_round_2(
-                prompt=prompt,
-                working_directory=working_directory,
-                round_1=round_1,
-                claude_opinion=claude_opinion,
-                critique=critique,
-                timeout=effective_timeout,
-                participants=participants,
-            )
+    async def _do_round_2_if_needed(
+        self, deliberate, prompt, working_directory, round_1, claude_opinion,
+        critique, timeout, participants,
+    ) -> CouncilRound | None:
+        if not deliberate:
+            return None
+        await self.notify("Council Round 2: deliberation phase", progress=60)
+        return await self._run_round_2(
+            prompt=prompt, working_directory=working_directory, round_1=round_1,
+            claude_opinion=claude_opinion, critique=critique, timeout=timeout,
+            participants=participants,
+        )
 
-        # Pairwise agreement matrix: judge every pair of R1 contents.
-        # Bounded concurrency so the agreement judge isn't hammered.
+    async def _persist_pairwise_safe(self, prompt: str, r1_contents: dict[str, str]) -> None:
         try:
             await self._compute_and_persist_pairwise(prompt, r1_contents)
         except Exception as e:
             self.log(f"pairwise agreement failed: {e}")
-        # Position deltas: how much each agent changed between R1 and R2.
-        if round_2 is not None:
-            try:
-                self._compute_and_persist_position_deltas(round_1, round_2)
-            except Exception as e:
-                self.log(f"position-delta computation failed: {e}")
 
-        # Build response
-        claude_opinion_obj = None
-        if claude_opinion and claude_opinion.strip():
-            claude_opinion_obj = ClaudeOpinion(
-                content=claude_opinion.strip(),
-                provided_at=council_start.isoformat(),
-            )
+    def _persist_position_deltas_safe(self, round_1: CouncilRound, round_2: CouncilRound) -> None:
+        try:
+            self._compute_and_persist_position_deltas(round_1, round_2)
+        except Exception as e:
+            self.log(f"position-delta computation failed: {e}")
 
-        total_duration = (datetime.now() - council_start).total_seconds()
-        await self.notify(f"Council deliberation complete ({total_duration:.1f}s)", progress=100)
+    def _build_outcome(
+        self, *, prompt, working_directory, round_1, round_2, participants,
+        council_start, deliberate, critique,
+        agreement_score, agreement_reason, claude_opinion,
+    ) -> CouncilResponse:
+        claude_opinion_obj = (
+            ClaudeOpinion(content=claude_opinion.strip(), provided_at=council_start.isoformat())
+            if claude_opinion and claude_opinion.strip() else None
+        )
 
         timing = self._collect_timing(round_1, 1) + (self._collect_timing(round_2, 2) if round_2 else [])
         timing.sort(key=lambda t: t.duration_seconds, reverse=True)
         slowest = timing[0].agent if timing else None
 
-        resolved_roles = {p.seat: p.role for p in participants}
-
         final_total_s = (datetime.now() - council_start).total_seconds()
         rounds_count = 2 if deliberate else 1
-        store.record_council_outcome(
-            self.council_id,
-            total_duration_s=final_total_s,
-            rounds=rounds_count,
-            deliberation=bool(deliberate),
-            critique=critique,
-            agreement_score=agreement_score,
-            agreement_reason=agreement_reason,
-            progress_log=self.log_entries,
-            claude_opinion=(claude_opinion.strip() if claude_opinion else None),
-        )
 
+        # Persist outcome BEFORE building the response so a Pydantic failure on
+        # CouncilResponse construction can't lose the persisted outcome row.
+        try:
+            store.record_council_outcome(
+                self.council_id,
+                total_duration_s=final_total_s, rounds=rounds_count,
+                deliberation=bool(deliberate), critique=critique,
+                agreement_score=agreement_score, agreement_reason=agreement_reason,
+                progress_log=self.log_entries,
+                claude_opinion=(claude_opinion.strip() if claude_opinion else None),
+            )
+        except Exception as _e:
+            self.log(f"record_council_outcome failed: {_e}")
+
+        resolved_roles = {p.seat: p.role for p in participants}
         return CouncilResponse(
             prompt=prompt,
             working_directory=working_directory,
@@ -518,7 +530,10 @@ class Council:
                         pass
                 if task.async_task and not task.async_task.done():
                     task.async_task.cancel()
-                self._engine._log_timing(task)
+                try:
+                    store.record_task_complete(task)
+                except Exception as _e:
+                    self.log(f"failed to persist timed-out task {task.task_id}: {_e}")
 
     @staticmethod
     def _is_capacity_error(task, runner) -> bool:

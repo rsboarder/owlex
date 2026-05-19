@@ -160,6 +160,12 @@ class OwlexConfig:
             )
 
 
+# Known runner identifiers (matches owlex.agents Agent enum). Used to
+# validate seat:runner:model entries up front instead of letting them
+# silently 600s-timeout when the runner doesn't recognize the model.
+_KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"})
+
+
 def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
     """Parse COUNCIL_SUBSTITUTION_MODELS = ``seat:runner:model,seat:model,...``.
 
@@ -167,7 +173,10 @@ def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
       - ``seat:runner:model``   → run the named seat through ``runner`` with ``model``
       - ``seat:model``          → run the named seat through the default donor with ``model``
 
-    Invalid entries are dropped with a warning; an empty / missing var returns None.
+    Invalid entries (malformed shape, unknown runner, empty model) are
+    dropped with a warning; an empty/missing var returns None. Catching
+    typos here prevents the 600s-timeout failure mode where an unknown
+    model string gets shipped to a runner that silently rejects it.
     """
     raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
     if not raw.strip():
@@ -177,6 +186,13 @@ def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
         parts = [p.strip() for p in entry.strip().split(":")]
         if len(parts) == 3 and all(parts):
             seat, runner, model = parts
+            if runner.lower() not in _KNOWN_RUNNERS:
+                print(
+                    f"[WARNING] COUNCIL_SUBSTITUTION_MODELS: runner {runner!r} "
+                    f"is not one of {sorted(_KNOWN_RUNNERS)}; entry {entry!r} skipped",
+                    file=sys.stderr, flush=True,
+                )
+                continue
             out[seat.lower()] = (runner.lower(), model)
         elif len(parts) == 2 and all(parts):
             seat, model = parts

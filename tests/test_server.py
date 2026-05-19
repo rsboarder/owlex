@@ -65,7 +65,7 @@ class TestStartCodexSession:
 
     @pytest.fixture
     def mock_engine(self):
-        with patch("owlex.server.engine") as mock:
+        with patch("owlex.server._tasks.engine") as mock:
             mock.create_task = MagicMock(return_value=Task(
                 task_id="test-123",
                 status=TaskStatus.PENDING.value,
@@ -120,7 +120,7 @@ class TestGetTaskResult:
         """Should return NOT_FOUND for non-existent task."""
         from owlex.server import get_task_result
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = None
 
             result = await get_task_result("nonexistent-id")
@@ -137,7 +137,7 @@ class TestWaitForTask:
         """Should return NOT_FOUND for non-existent task."""
         from owlex.server import wait_for_task
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = None
 
             result = await wait_for_task("nonexistent-id")
@@ -159,7 +159,7 @@ class TestWaitForTask:
             error="Something went wrong",
         )
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = failed_task
 
             result = await wait_for_task("failed-123")
@@ -181,7 +181,7 @@ class TestWaitForTask:
             error="Cancelled by user",
         )
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = cancelled_task
 
             result = await wait_for_task("cancelled-123")
@@ -198,7 +198,7 @@ class TestCancelTask:
         """Should return NOT_FOUND for non-existent task."""
         from owlex.server import cancel_task
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = None
 
             result = await cancel_task("nonexistent-id")
@@ -219,7 +219,7 @@ class TestCancelTask:
             start_time=datetime.now(),
         )
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = completed_task
 
             result = await cancel_task("completed-123")
@@ -241,7 +241,7 @@ class TestCancelTask:
             start_time=datetime.now(),
         )
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.get_task.return_value = running_task
             mock_engine.kill_task_subprocess = AsyncMock()
 
@@ -260,7 +260,7 @@ class TestListTasks:
         """Should return empty list when no tasks."""
         from owlex.server import list_tasks
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.tasks = {}
 
             # Pass explicit values for all Field() parameters
@@ -275,7 +275,7 @@ class TestListTasks:
         """Should filter tasks by status."""
         from owlex.server import list_tasks
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             mock_engine.tasks = {
                 "task-1": Task(
                     task_id="task-1",
@@ -303,7 +303,7 @@ class TestListTasks:
         """Should respect limit parameter."""
         from owlex.server import list_tasks
 
-        with patch("owlex.server.engine") as mock_engine:
+        with patch("owlex.server._tasks.engine") as mock_engine:
             # Create many tasks
             mock_engine.tasks = {
                 f"task-{i}": Task(

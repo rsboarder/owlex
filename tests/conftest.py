@@ -14,6 +14,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from owlex.engine import TaskEngine
 
 
+@pytest.fixture(autouse=True)
+def _isolate_owlex_home(tmp_path, monkeypatch):
+    """Point OWLEX_HOME at a per-test tmp dir so the suite never writes to ~/.owlex."""
+    monkeypatch.setenv("OWLEX_HOME", str(tmp_path / "owlex_home"))
+    from owlex import derivations, store
+    store._reset_for_tests()
+    derivations._reset_for_tests()
+    yield
+    store._reset_for_tests()
+    derivations._reset_for_tests()
+
+
 @pytest.fixture
 def engine():
     """Create a fresh TaskEngine for each test."""

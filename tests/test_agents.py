@@ -193,8 +193,30 @@ class TestGeminiRunner:
             assert cmd.output_prefix == "Gemini Output"
             assert cmd.stream is True
 
+    def test_exec_sets_trust_workspace_env(self, runner):
+        """Must inject GEMINI_CLI_TRUST_WORKSPACE=true to bypass the workspace-trust
+        gate added in gemini-cli 0.39.1 (GHSA-wpqr-6v78-jr5g, CVSS 10.0 RCE patch).
+        Without it, headless gemini runs exit 55 with 'not a trusted directory'.
+        """
+        with patch("owlex.agents.gemini.config"):
+            cmd = runner.build_exec_command(prompt="x")
+            assert cmd.env_overrides is not None
+            assert cmd.env_overrides.get("GEMINI_CLI_TRUST_WORKSPACE") == "true"
+
+    def test_resume_sets_trust_workspace_env(self, runner):
+        """Same trust bypass must be set on resume invocations too."""
+        with patch("owlex.agents.gemini.config"):
+            cmd = runner.build_resume_command(session_ref="sess-1", prompt="x")
+            assert cmd.env_overrides is not None
+            assert cmd.env_overrides.get("GEMINI_CLI_TRUST_WORKSPACE") == "true"
+
     def test_exec_with_working_directory(self, runner):
-        """Should add --include-directories flag for working directory."""
+        """Should add --include-directories flag for working directory.
+
+        cwd is a stable per-project tmpdir (not the project root) so gemini
+        cannot accidentally write to the project. The project path is exposed
+        via --include-directories instead.
+        """
         with patch("owlex.agents.gemini.config") as mock_config:
             mock_config.gemini.yolo_mode = False
 
@@ -206,7 +228,9 @@ class TestGeminiRunner:
             assert "--include-directories" in cmd.command
             idx = cmd.command.index("--include-directories")
             assert cmd.command[idx + 1] == "/path/to/dir"
-            assert cmd.cwd == "/path/to/dir"
+            assert cmd.cwd is not None
+            assert cmd.cwd != "/path/to/dir"
+            assert "owlex-gemini" in cmd.cwd
 
     def test_exec_yolo_mode(self, runner):
         """Should add yolo approval mode when enabled."""
@@ -219,14 +243,20 @@ class TestGeminiRunner:
             idx = cmd.command.index("--approval-mode")
             assert cmd.command[idx + 1] == "yolo"
 
-    def test_exec_without_yolo(self, runner):
-        """Should not include yolo flag when disabled."""
+    def test_exec_always_yolo(self, runner):
+        """yolo approval-mode is always set, regardless of config.
+
+        The flag is required to prevent tool-approval hangs in non-interactive
+        mode; the legacy ``gemini.yolo_mode`` config field is no longer gating it.
+        """
         with patch("owlex.agents.gemini.config") as mock_config:
             mock_config.gemini.yolo_mode = False
 
             cmd = runner.build_exec_command(prompt="Hello")
 
-            assert "--approval-mode" not in cmd.command
+            assert "--approval-mode" in cmd.command
+            idx = cmd.command.index("--approval-mode")
+            assert cmd.command[idx + 1] == "yolo"
 
     def test_resume_basic_command(self, runner):
         """Should build basic resume command."""

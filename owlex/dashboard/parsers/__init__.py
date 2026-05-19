@@ -24,8 +24,23 @@ _REGISTRY: dict[str, Parser] = {
 }
 
 
-def parse_for(agent: str, task_id: str, ts: str, session_id: str | None = None) -> list[dict]:
-    fn = _REGISTRY.get(agent)
+def parse_for(
+    agent: str,
+    task_id: str,
+    ts: str,
+    session_id: str | None = None,
+    *,
+    runner: str | None = None,
+) -> list[dict]:
+    """Dispatch to the parser owning this task's transcript.
+
+    For substituted seats (claudeor->codex), pass runner='codex' so we look
+    in ~/.codex/sessions, not ~/.claude/projects. Without this, a
+    substituted-claudeor task picks up the parent Claude Code session's
+    tool calls (council_ask, rate_council, etc.) and mis-attributes them.
+    """
+    effective = runner or agent
+    fn = _REGISTRY.get(effective)
     if not fn:
         return []
     try:
@@ -34,7 +49,14 @@ def parse_for(agent: str, task_id: str, ts: str, session_id: str | None = None) 
         return []
 
 
-def parse_and_persist(task_id: str, agent: str, ts: str, session_id: str | None = None) -> int:
+def parse_and_persist(
+    task_id: str,
+    agent: str,
+    ts: str,
+    session_id: str | None = None,
+    *,
+    runner: str | None = None,
+) -> int:
     """Run the agent's parser and write skill_invocations + skill_parse_state.
 
     Idempotent: if a parse_state row already exists, returns the cached count.
@@ -47,7 +69,7 @@ def parse_and_persist(task_id: str, agent: str, ts: str, session_id: str | None 
     ).fetchone()
     if cached:
         return int(cached["found"])
-    invocations = parse_for(agent, task_id, ts, session_id=session_id)
+    invocations = parse_for(agent, task_id, ts, session_id=session_id, runner=runner)
     with _store._LOCK:  # type: ignore[attr-defined]
         conn.execute("BEGIN")
         try:

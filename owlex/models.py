@@ -77,9 +77,16 @@ class Task:
     # Streaming support
     output_lines: list[str] = field(default_factory=list)
     stream_complete: bool = False
+    # Instrumentation: monotonic timestamp of the most recent stream line.
+    # Used by the heartbeat probe to detect stalled subprocesses.
+    last_output_monotonic: float | None = field(default=None, repr=False)
     # Resolved model identifier (gen_ai.request.model). Set by run_agent_command
     # from AgentCommand.model when the runner knows the model.
     model: str | None = None
+    # Concrete runner that handled this task ('codex', 'gemini', ...). For
+    # substituted seats this is the runner, not the seat — used by the
+    # skill parser to dispatch to the right transcript source.
+    runner: str | None = None
 
 
 # === Pydantic Response Models ===
