@@ -63,10 +63,18 @@ See `docs/solutions/protocols/cross-layer-reaches-need-protocol-contracts.md`.
 
 ### External CLI Catalogs Rotate — Pin via Env + Probe at Startup
 
-**Problem**: `AGREEMENT_MODEL = "gemini-2.5-flash"` hardcoded. Cursor removed it from catalog. Owlex silently fell back to overlap heuristic for weeks; every R1→R2 decision was string-overlap, not LLM judge.
+**Problem**: `AGREEMENT_MODEL = "gemini-2.5-flash"` hardcoded. Cursor removed it from catalog. Owlex silently fell back to overlap heuristic for weeks; every R1→R2 decision was string-overlap, not LLM judge. Repeated with `gemini-3-flash` after Google's preview deprecation — same silent failure mode.
 
-**Solution**: Every pinned model identifier is `os.getenv("OWLEX_*_MODEL", "default")`. Startup probe in `server.main()` calls `agreement.probe_agreement_model(timeout=10s)` and logs `[ok]`/`[WARN]` line. Recovery is one env-var edit in `~/.claude/settings.json`.
+**Solution**: Every pinned model identifier is `os.getenv("OWLEX_*_MODEL", "default")`. Startup probe in `server.main()` calls `agreement.probe_agreement_model(timeout=10s)` and logs `[ok]`/`[WARN]` line. Recovery is one env-var edit in `~/.claude/settings.json`. As of 2026-05-23 the judge runs through codex CLI with `gpt-5.5` + `reasoning_effort=low` — eliminates cursor's catalog as a moving part and gives ~4s per judge call.
 See `docs/solutions/external-tools/cli-catalog-rotation-needs-health-check.md`.
+
+### Shadow-Replay Required Before New Seat/Judge/Rater Integration
+
+**Problem**: Ad-hoc seat additions worked when candidates were homogeneous (codex/claudeor/gemini — all general-purpose). As the LLM landscape diversifies (Grok-build, GLM, Qwen-Coder), vendor positioning ("coding-focused", "fastest") consistently diverges from measured behavior on this specific workload. Integrating a misfit seat adds noise instead of signal and is expensive to detect (rating shifts, judge drift).
+
+**Solution**: Before integrating any new CLI agent as seat/judge/rater, run three shadow experiments against historical `~/.owlex/owlex.db` (read-only) — agreement-judge replay, seat-R1 structural shadow, blind-rater replay. Templates: `scripts/shadow_grok_judge.py`, `scripts/shadow_grok_seat.py`, `scripts/shadow_grok_rater.py`. Decision matrix + per-segment bias check in the protocol doc.
+See `docs/solutions/architecture/shadow-replay-protocol-for-seat-evaluation.md`.
+Worked example (Grok-build May 2026): `docs/solutions/architecture/grok-build-2026-05-shadow-eval.md`.
 
 </details>
 
@@ -79,7 +87,8 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
 | `COUNCIL_EXCLUDE_AGENTS` | `""` | CSV of seats to skip (e.g. `aichat,opencode`) |
 | `COUNCIL_SUBSTITUTION_MODELS` | `""` | `seat:runner:model,...` (e.g. `claudeor:codex:gpt-5.5`) |
 | `CURSOR_MODEL` | (cursor default) | Pin cursor seat's model (e.g. `composer-2.5`) |
-| `OWLEX_AGREEMENT_MODEL` | `gemini-3-flash` | Model used by the judge (cursor-agent CLI) |
+| `OWLEX_AGREEMENT_MODEL` | `gpt-5.5` | Model used by the judge (codex CLI) |
+| `OWLEX_AGREEMENT_REASONING` | `low` | Reasoning effort for judge (`low`/`medium`/`high`) |
 | `OWLEX_AGREEMENT_TIMEOUT` | `90` | Per-call timeout for agreement judge (s) |
 | `OWLEX_HOME` | `~/.owlex` | Persistence root. Set by tests' autouse fixture. |
 | `OWLEX_AGENT_MAX_OUTPUT_BYTES` | `25_000_000` | Per-stream output cap for runaway agents |
