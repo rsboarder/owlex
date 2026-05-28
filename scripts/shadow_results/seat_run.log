@@ -1,0 +1,11 @@
+[resume] 10 councils already processed
+[init] loading up to 15 councils with blind ratings + >=3 seats
+[init] 5 councils remaining (effort=low, model=grok-build)
+[1/5] 213149 — len=13538 cb=0 fr=5 (140.7s)
+[2/5] 002039 — len=9394 cb=0 fr=1 (120.1s)
+[3/5] 123537 — len=11518 cb=0 fr=8 (181.6s)
+[4/5] 232853 — len=11718 cb=0 fr=4 (135.7s)
+[5/5] 231120 — len=14830 cb=1 fr=23 (279.7s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_r1_responses.jsonl
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_r1_metrics.md
