@@ -78,7 +78,7 @@ class CursorRunner(AgentRunner):
 
     @property
     def cli_command(self) -> str:
-        return "agent"
+        return "cursor-agent"
 
     @property
     def output_prefix(self) -> str:
@@ -93,7 +93,7 @@ class CursorRunner(AgentRunner):
         **kwargs,
     ) -> AgentCommand:
         """Build command for starting a new Cursor Agent session."""
-        full_command = ["agent", "--print", "--output-format", "text", "--trust"]
+        full_command = ["cursor-agent", "--print", "--output-format", "text", "--trust"]
 
         # Model selection: explicit override > config > default
         model = model_override or config.cursor.model
@@ -131,7 +131,7 @@ class CursorRunner(AgentRunner):
         **kwargs,
     ) -> AgentCommand:
         """Build command for resuming an existing Cursor Agent session."""
-        full_command = ["agent", "--print", "--output-format", "text", "--trust"]
+        full_command = ["cursor-agent", "--print", "--output-format", "text", "--trust"]
 
         # Model selection: explicit override > config > default
         model = model_override or config.cursor.model
