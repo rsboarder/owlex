@@ -24,7 +24,7 @@ async def get_agents() -> str:
         get_cli_version("gemini"),
         get_cli_version("opencode"),
         get_cli_version("aichat"),
-        get_cli_version("agent"),
+        get_cli_version("cursor-agent"),
     )
 
     agents = {
