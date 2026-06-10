@@ -498,8 +498,9 @@ def corpus_stats(items: list[dict]) -> dict:
 
     ``objective_label_pct``
         Items are *labeled* when they have ≥1 bug.  Among labeled items,
-        *objective* means ``source ∈ {seeded, real-fix, mutant}``; *soft*
-        means ``source ∈ {db-llm-label, documented-soft}``.
+        *objective* means ``source ∈ {seeded, mutant, dataset}``; *soft*
+        means ``source ∈ {db-llm-label, documented-soft, flywheel}``.
+        ``owlex-realism`` items have ``bugs=[]`` so they are never labeled.
         Returns ``{"labeled": n, "objective": n, "soft": n, "pct_objective": float|None}``.
 
     ``n_decoys``
@@ -523,7 +524,7 @@ def corpus_stats(items: list[dict]) -> dict:
     objective_labeled = 0
     soft_labeled = 0
 
-    _OBJECTIVE_SOURCES = {"seeded", "real-fix", "mutant", "dataset"}
+    _OBJECTIVE_SOURCES = {"seeded", "mutant", "dataset"}
     _SOFT_SOURCES = {"db-llm-label", "documented-soft", "flywheel"}
 
     for item in items:

@@ -67,6 +67,19 @@ The AUDIT-0 corpus (8 seeded + 3 real) is over-fit-prone → every detection num
 
 **Headline: seeded numbers DO NOT generalize — P0 over-fit confirmed by measurement.** Honest revision (plan's success criterion), NOT p-hacked.
 
+## ⭐ CORRECTED CONCLUSION (AUDIT-10e / TASK-13) — read this, it supersedes the alarmist numbers below
+Three rounds of "the auditor is weak on real bugs" all turned out to be **corpus-construction artifacts**, not auditor weakness (polarity → decoy-instrument → mined-label garbage). Final demotion (AUDIT-10e): `mine_fixes` auto-anchored bug labels at the first changed line of the reversed diff = usually an import/comment/markdown line, NOT the defect. owlex-mined fix-commits are now **unlabeled realism targets** (`source=owlex-realism`, `bugs:[]`); docs → `documented-soft`. Objective-labeled strata = **seeded + mutant + dataset(BugsInPy) only**.
+
+**On the TRUSTWORTHY strata the auditor is strong (stalo_probe_v3, K=5):**
+| stratum | precision | recall |
+|---|---|---|
+| seeded | 0.98 | 1.00 |
+| mutant | 1.00 | 1.00 |
+| dataset (BugsInPy real Python bugs) | 0.92 | 1.00 |
+
+→ **The P0 over-fit fear resolves in the auditor's favor.** On real, well-labeled bugs it catches ~100% with ~0.95 precision. The earlier "0.60 / 0.33 recall on real owlex bugs" was pure label noise. The lens A/B experiment (`bench/exp_lens.py`) was NEGATIVE (measuring noise) — not shipped.
+**Net program value: a benchmark that catches its own construction bugs and PREVENTED shipping a noise-driven "improvement."** The remaining open precision question is the decoy instrument (TASK-12, needs equivalent mutants).
+
 ## ✅ CONSTRUCTION BUGS FIXED (AUDIT-10b / TASK-10) + re-probe (v2)
 Both bugs below were fixed. `reverse_unified_diff` added to `bench/corpus.py`; `mine_fixes.py`/`ingest_bugsinpy.py` now present the BUGGY pre-fix code as `+` lines; `mutate.py` emits a unit diff per mutant (has_diff=22, runnable). bench 181 tests + tests/ 303 green.
 

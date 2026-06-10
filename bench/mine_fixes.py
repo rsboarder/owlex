@@ -1,10 +1,14 @@
-"""Harvest objectively-labeled corpus items from owlex git history + docs.
+"""Harvest corpus items from owlex git history + docs.
 
 Three miners produce items in the seeded-manifest item shape so they can be
 fed straight into bench/run.py alongside the seeded corpus:
 
-  mine_fix_commits  — genuine bug-fix commits → labeled bugs
-  mine_solution_docs — docs/solutions + CLAUDE.md "Learned Patterns" → documented bugs
+  mine_fix_commits  — genuine bug-fix commits → UNLABELED realism targets
+                      (source=owlex-realism, bugs=[], useful for cost/realism
+                      but NOT as line-labeled ground truth — auto-anchoring is
+                      unreliable and often lands on import/comment lines)
+  mine_solution_docs — docs/solutions + CLAUDE.md "Learned Patterns" → soft
+                      labeled items (source=documented-soft, label_kind=documented)
   mine_decoys       — refactor/chore commits → decoy items (no bugs, FP-catchers)
 
 Run ``python bench/mine_fixes.py --out bench/corpus/mined/manifest.json`` to
@@ -161,12 +165,16 @@ def _is_genuine_fix(subject: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def mine_fix_commits(repo: str = ".", max_items: int | None = None) -> list[dict]:
-    """For each genuine bug-fix commit, emit a labeled item describing the bug.
+    """For each genuine bug-fix commit, emit an UNLABELED realism target.
 
-    POLARITY fix: the item's ``diff`` is the *reversed* fix-commit diff so the
-    reviewer sees the pre-fix (buggy) code as ``+`` (added) lines.  The bug
-    label's ``file``/``line`` is anchored to the first added (buggy) line in
-    the reversed diff via ``added_lines_by_file``.
+    Items carry ``source="owlex-realism"`` and ``bugs=[]`` — the auto-anchored
+    line label was unreliable (often landed on import/comment lines rather than
+    the actual defect), so these items are NOT objective ground truth.  They
+    remain useful as realistic review targets for cost/realism measurement.
+
+    POLARITY: the item's ``diff`` is the *reversed* fix-commit diff so the
+    reviewer sees the pre-fix (buggy) code as ``+`` (added) lines.  A ``note``
+    field records the commit subject for provenance.
     """
     raw = _git(
         ["log", "--format=%H %s", "-i",
@@ -192,31 +200,13 @@ def mine_fix_commits(repo: str = ".", max_items: int | None = None) -> list[dict
         # Reverse the diff so the buggy (pre-fix) code appears as added lines
         reversed_diff = reverse_unified_diff(fix_diff)
 
-        # Anchor the bug label at the first added (buggy) line in the reversed diff
-        added = added_lines_by_file(reversed_diff)
-        if primary_file in added and added[primary_file]:
-            bug_line = min(added[primary_file])
-        else:
-            bug_line = 1
-
-        body_lines = _git(["show", "-s", "--format=%B", full_sha], repo).splitlines()
-        first_body = body_lines[1].strip() if len(body_lines) > 1 else ""
-        # Description reads as a defect in the pre-fix code, not the fix itself
-        description = subject + " — buggy code before fix" + (f": {first_body}" if first_body else "")
-
         item = {
             "id": f"fix-{_short_sha(full_sha)}",
             "file": primary_file,
             "diff": reversed_diff,
-            "bugs": [
-                {
-                    "bug_type": infer_bug_type(subject),
-                    "file": primary_file,
-                    "line": bug_line,
-                    "description": description,
-                }
-            ],
-            "source": "real-fix",
+            "bugs": [],
+            "note": subject,
+            "source": "owlex-realism",
             "lang": "python",
             "diff_size": _diff_size_label(changed_lines),
             "risk_domain": infer_risk_domain(subject, primary_file),
@@ -291,7 +281,7 @@ def mine_solution_docs(repo: str = ".") -> list[dict]:
                         "description": f"{title}: {problem}",
                     }
                 ],
-                "source": "real-fix",
+                "source": "documented-soft",
                 "lang": "python",
                 "diff_size": "M",
                 "risk_domain": infer_risk_domain(title, code_file),
@@ -369,7 +359,7 @@ def _mine_claude_md_patterns(text: str, source_path: str) -> list[dict]:
                     "description": f"{title}: {problem}",
                 }
             ],
-            "source": "real-fix",
+            "source": "documented-soft",
             "lang": "python",
             "diff_size": "M",
             "risk_domain": infer_risk_domain(title, code_file),
@@ -488,8 +478,8 @@ def main() -> None:
         "schema_version": 1,
         "kind": "mined",
         "description": (
-            "Mined corpus: real bug-fix commits (source=real-fix) + "
-            "documented bugs from docs/solutions + CLAUDE.md (label_kind=documented) + "
+            "Mined corpus: real bug-fix commits (source=owlex-realism, bugs=[], unlabeled realism targets) + "
+            "documented bugs from docs/solutions + CLAUDE.md (source=documented-soft, label_kind=documented) + "
             "refactor/chore decoys (source=decoy). "
             "Generated by bench/mine_fixes.py from owlex git history."
         ),
@@ -501,14 +491,14 @@ def main() -> None:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    n_fix = sum(1 for i in all_items if i["source"] == "real-fix" and i.get("label_kind") != "documented")
-    n_doc = sum(1 for i in all_items if i.get("label_kind") == "documented")
+    n_realism = sum(1 for i in all_items if i["source"] == "owlex-realism")
+    n_doc = sum(1 for i in all_items if i["source"] == "documented-soft")
     n_decoy = sum(1 for i in all_items if i["source"] == "decoy")
     print(f"Mined corpus written to {out_path}")
-    print(f"  fix commits : {n_fix}")
-    print(f"  doc items   : {n_doc}")
-    print(f"  decoys      : {n_decoy}")
-    print(f"  total       : {len(all_items)}")
+    print(f"  owlex-realism  : {n_realism}  (unlabeled fix-commit targets)")
+    print(f"  documented-soft: {n_doc}  (soft-labeled docs/CLAUDE.md patterns)")
+    print(f"  decoy          : {n_decoy}")
+    print(f"  total          : {len(all_items)}")
 
 
 if __name__ == "__main__":

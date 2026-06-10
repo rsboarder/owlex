@@ -5,8 +5,8 @@ Tests cover:
 - _diff_size_label bucketing (S / M / L thresholds)
 - _changed_py_files and _first_changed_line parsing from a hand-written diff
 - mine_decoys produces bugs=[] + a populated decoys list
-- mine_fix_commits returns validly-shaped items when run against the real repo
-  (count not asserted — history is not frozen)
+- mine_fix_commits returns validly-shaped UNLABELED realism items (source=owlex-realism,
+  bugs=[], note=commit-subject, diff present) — count not asserted (history not frozen)
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from bench.mine_fixes import (
     infer_bug_type,
+    mine_solution_docs,
     _diff_size_label,
     _changed_py_files,
     _first_changed_line,
@@ -161,16 +162,38 @@ def test_mine_decoys_items_have_empty_bugs_and_populated_decoys():
 # ---------------------------------------------------------------------------
 
 def test_mine_fix_commits_returns_validly_shaped_items():
-    """Each mined fix item must carry id/source/bugs with required sub-keys."""
+    """Each mined fix item is an UNLABELED realism target: source=owlex-realism,
+    bugs=[], note=commit-subject, diff non-empty."""
     repo_root = os.path.join(os.path.dirname(__file__), "..", "..")
     items = mine_fix_commits(repo=repo_root, max_items=20)
     assert isinstance(items, list)
     for item in items:
         assert "id" in item and item["id"].startswith("fix-")
-        assert item["source"] == "real-fix"
-        assert isinstance(item["bugs"], list) and len(item["bugs"]) >= 1
-        for bug in item["bugs"]:
-            assert {"bug_type", "file", "line", "description"} <= set(bug)
-            assert isinstance(bug["line"], int) and bug["line"] >= 1
+        assert item["source"] == "owlex-realism", f"{item['id']} should be owlex-realism"
+        assert item["bugs"] == [], f"{item['id']} should have empty bugs (unlabeled)"
+        assert isinstance(item.get("note"), str) and item["note"], \
+            f"{item['id']} should have a note (commit subject)"
+        assert item.get("diff"), f"{item['id']} should have a non-empty diff"
         assert item.get("diff_size") in ("S", "M", "L")
         assert item.get("split") in ("iterate", "holdout")
+
+
+# ---------------------------------------------------------------------------
+# mine_solution_docs shape contract (live, count-free)
+# ---------------------------------------------------------------------------
+
+def test_mine_solution_docs_returns_documented_soft_items():
+    """Documented items must carry source=documented-soft and label_kind=documented."""
+    repo_root = os.path.join(os.path.dirname(__file__), "..", "..")
+    items = mine_solution_docs(repo=repo_root)
+    assert isinstance(items, list)
+    for item in items:
+        assert item["source"] == "documented-soft", \
+            f"{item['id']} should be documented-soft"
+        assert item.get("label_kind") == "documented", \
+            f"{item['id']} should have label_kind=documented"
+        # Documented items keep their approximate bug label (line≈1)
+        assert isinstance(item.get("bugs"), list) and len(item["bugs"]) >= 1, \
+            f"{item['id']} should have at least one bug entry"
+        for bug in item["bugs"]:
+            assert {"bug_type", "file", "line", "description"} <= set(bug)
