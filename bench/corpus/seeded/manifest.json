@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "description": "Seeded corpus for AUDIT-0: synthetic diffs with known injected bugs (ground truth for precision/recall) plus decoys (plausible-but-not-a-bug, for precision). One planted issue per file so the line-tolerance matcher never has ambiguous attribution. Each item carries both a raw diff (diff_path) and a prose_summary (the editorialized 'было' input variant for AUDIT-2's prose-vs-raw comparison). bug 'line' = the new-file line number of the offending line within that file.",
   "line_window_default": 3,
   "items": [
@@ -7,6 +7,12 @@
       "id": "seed-01-subprocess-leak",
       "file": "owlex/probe.py",
       "diff_path": "diffs/seed-01-subprocess-leak.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "subprocess",
+      "difficulty": "medium",
+      "split": "iterate",
       "prose_summary": "Adds `run_probe()` in `owlex/probe.py`, which launches a subprocess via asyncio and awaits its output under a timeout before returning the decoded stdout; and `decode_stream()` in `owlex/probe_io.py`, which decodes raw bytes to a UTF-8 string.",
       "bugs": [
         {
@@ -28,6 +34,12 @@
       "id": "seed-02-env-parse",
       "file": "owlex/config_timeout.py",
       "diff_path": "diffs/seed-02-env-parse.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "config",
+      "difficulty": "easy",
+      "split": "iterate",
       "prose_summary": "Adds two env-config readers: `load_timeout()` in `owlex/config_timeout.py` reads `OWLEX_PROBE_TIMEOUT` and returns it as an int; `strict_enabled()` in `owlex/config_flag.py` reads `OWLEX_STRICT` and returns whether strict mode is enabled.",
       "bugs": [
         {
@@ -49,6 +61,12 @@
       "id": "seed-03-derivation-write",
       "file": "owlex/derivations_writer.py",
       "diff_path": "diffs/seed-03-derivation-write.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "derivation",
+      "difficulty": "medium",
+      "split": "iterate",
       "prose_summary": "Adds `record()` in `owlex/derivations_writer.py`, which looks up a session row by id and returns its id; and `emit_pairwise()` in `owlex/pairwise_sink.py`, which schedules a pairwise analytics write for a payload.",
       "bugs": [
         {
@@ -70,6 +88,12 @@
       "id": "seed-04-jsonl-parse",
       "file": "owlex/jsonl_tail.py",
       "diff_path": "diffs/seed-04-jsonl-parse.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "parsing",
+      "difficulty": "easy",
+      "split": "iterate",
       "prose_summary": "Adds `last_n()` in `owlex/jsonl_tail.py`, which returns the final n items of a list; and `coerce_count()` in `owlex/jsonl_guard.py`, which normalizes a count argument to a non-negative int.",
       "bugs": [
         {
@@ -91,6 +115,12 @@
       "id": "seed-05-anonymize",
       "file": "owlex/anonymize_map.py",
       "diff_path": "diffs/seed-05-anonymize.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "anonymization",
+      "difficulty": "medium",
+      "split": "holdout",
       "prose_summary": "Adds `assign()` in `owlex/anonymize_map.py`, which maps a list of names onto anonymized labels; and `store_value()` in `owlex/anonymize_sink.py`, which rounds a numeric value and stores it under a key.",
       "bugs": [
         {
@@ -112,6 +142,12 @@
       "id": "seed-06-heartbeat",
       "file": "owlex/heartbeat.py",
       "diff_path": "diffs/seed-06-heartbeat.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "heartbeat",
+      "difficulty": "easy",
+      "split": "iterate",
       "prose_summary": "Adds `elapsed_since()` in `owlex/heartbeat.py`, which computes how long since a task's last output; `is_stalled()` in `owlex/heartbeat_check.py`, which decides whether a task is stalled from an elapsed time and a limit; and `is_anonymous()` in `owlex/heartbeat_label.py`, which checks whether a name is anonymous.",
       "bugs": [
         {
@@ -140,6 +176,12 @@
       "file": "owlex/council_config.py",
       "diff_path": "diffs/seed-07-large-council-config.diff",
       "post_image_dir": "post_image/seed-07-large-council-config",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "L",
+      "risk_domain": "council-config",
+      "difficulty": "hard",
+      "split": "iterate",
       "prose_summary": "Extends `owlex/council_config.py` with a quorum/majority policy — adds a `quorum()` helper and an `is_majority()` check — alongside the existing seat-model, reasoning, label, retry, and timeout helpers in that module.",
       "bugs": [
         {
@@ -156,6 +198,12 @@
       "file": "owlex/rating_stats.py",
       "diff_path": "diffs/seed-08-large-rating-stats.diff",
       "post_image_dir": "post_image/seed-08-large-rating-stats",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "L",
+      "risk_domain": "rating",
+      "difficulty": "hard",
+      "split": "iterate",
       "prose_summary": "Reworks the quantile index computation in `owlex/rating_stats.py` and extends the rating aggregation — adds a `spread()` helper and a `p100` field to `aggregate_seat()` — in that stats module.",
       "bugs": [
         {
@@ -171,6 +219,12 @@
       "id": "seed-09-bait-hallucination",
       "file": "owlex/retry_budget.py",
       "diff_path": "diffs/seed-09-bait-hallucination.diff",
+      "source": "seeded",
+      "lang": "python",
+      "diff_size": "S",
+      "risk_domain": "hallucination",
+      "difficulty": "medium",
+      "split": "holdout",
       "prose_summary": "Adds `retry_delays()` in `owlex/retry_budget.py`, which builds the list of backoff delays for a retry loop by calling `compute_delay()` (imported from `owlex/backoff.py`) for each attempt up to the configured maximum.",
       "bugs": [
         {

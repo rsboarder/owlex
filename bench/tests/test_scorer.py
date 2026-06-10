@@ -319,3 +319,173 @@ def test_validate_manifest_rejects_missing_fields_and_bad_line():
 
 def test_validate_manifest_empty():
     assert scorer.validate_manifest({"items": []}) == ["manifest.items must be a non-empty list"]
+
+
+# --- corpus_hash ----------------------------------------------------------
+
+def _minimal_manifest(extra_bugs: int = 0) -> dict:
+    """A valid manifest with 10 bugs across 3 types + 2 decoys."""
+    items = []
+    types = ["resource_leak", "error_swallow", "boundary"]
+    for i in range(5):
+        items.append({
+            "id": f"seed-{i:02d}",
+            "file": f"owlex/mod{i}.py",
+            "diff_path": f"diffs/seed-{i:02d}.diff",
+            "prose_summary": "did a thing",
+            "bugs": [
+                {"bug_type": types[i % 3], "file": f"owlex/mod{i}.py", "line": 1, "description": "d"},
+                {"bug_type": types[(i + 1) % 3], "file": f"owlex/mod{i}.py", "line": 2, "description": "d"},
+            ],
+            "decoys": [{"file": f"owlex/mod{i}.py", "line": 3, "description": "d"}],
+        })
+    return {"items": items}
+
+
+def test_corpus_hash_is_stable():
+    m = _minimal_manifest()
+    h1 = scorer.corpus_hash(m)
+    h2 = scorer.corpus_hash(m)
+    assert h1 == h2
+    assert len(h1) == 64  # sha256 hex digest
+
+
+def test_corpus_hash_changes_when_bug_label_changes():
+    m = _minimal_manifest()
+    h_before = scorer.corpus_hash(m)
+    m["items"][0]["bugs"][0]["bug_type"] = "security"
+    h_after = scorer.corpus_hash(m)
+    assert h_before != h_after
+
+
+def test_corpus_hash_ignores_inlined_diff_and_post_image():
+    """Hash must be identical before and after load_seeded() inlines diff/post_image."""
+    m = _minimal_manifest()
+    h_before = scorer.corpus_hash(m)
+    # Simulate what load_seeded() does: inject inline content
+    for item in m["items"]:
+        item["diff"] = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1 @@\n+x\n"
+        item["post_image"] = {"x.py": "x\n"}
+    h_after = scorer.corpus_hash(m)
+    assert h_before == h_after
+
+
+# --- stratum_map ----------------------------------------------------------
+
+def test_stratum_map_returns_expected_mapping():
+    m = {
+        "items": [
+            {"id": "a", "split": "iterate"},
+            {"id": "b", "split": "holdout"},
+            {"id": "c"},  # field absent → _unset
+        ]
+    }
+    result = scorer.stratum_map(m, "split")
+    assert result == {"a": "iterate", "b": "holdout", "c": "_unset"}
+
+
+def test_stratum_map_unknown_field_gives_unset():
+    m = {"items": [{"id": "x", "lang": "python"}]}
+    result = scorer.stratum_map(m, "nonexistent_field")
+    assert result == {"x": "_unset"}
+
+
+# --- score_by_stratum -----------------------------------------------------
+
+def _make_run_scores(recall: float, precision: float | None) -> dict:
+    return {
+        "n_findings": 1 if precision is not None else 0,
+        "tp": 1 if precision == 1.0 else 0,
+        "fp": 0,
+        "bugs_total": 1,
+        "bugs_found": 1 if recall == 1.0 else 0,
+        "decoy_hits": 0,
+        "precision": precision,
+        "recall": recall,
+        "detected_any": recall > 0,
+    }
+
+
+def test_score_by_stratum_groups_and_aggregates():
+    per_item = [
+        {"id": "a", "run_scores": [_make_run_scores(1.0, 1.0), _make_run_scores(0.0, None)]},
+        {"id": "b", "run_scores": [_make_run_scores(1.0, 1.0)]},
+        {"id": "c", "run_scores": [_make_run_scores(0.0, 0.0)]},
+    ]
+    strata = {"a": "iterate", "b": "iterate", "c": "holdout"}
+    result = scorer.score_by_stratum(per_item, strata)
+
+    assert set(result.keys()) == {"iterate", "holdout"}
+    # iterate: items a and b → 3 run_scores total; recall values 1.0, 0.0, 1.0 → mean 2/3
+    assert abs(result["iterate"]["recall"]["mean"] - 2 / 3) < 1e-9
+    assert result["iterate"]["runs"] == 3
+    # holdout: item c → 1 run_score; recall 0.0
+    assert result["holdout"]["recall"]["mean"] == 0.0
+    assert result["holdout"]["runs"] == 1
+
+
+def test_score_by_stratum_uses_unlabeled_for_missing_ids():
+    per_item = [
+        {"id": "unknown-id", "run_scores": [_make_run_scores(1.0, 1.0)]},
+    ]
+    strata = {}  # no mapping → _unlabeled
+    result = scorer.score_by_stratum(per_item, strata)
+    assert "_unlabeled" in result
+    assert result["_unlabeled"]["runs"] == 1
+
+
+def test_score_by_stratum_result_is_sorted_by_label():
+    per_item = [
+        {"id": "z", "run_scores": [_make_run_scores(0.0, 0.0)]},
+        {"id": "a", "run_scores": [_make_run_scores(1.0, 1.0)]},
+    ]
+    strata = {"z": "zzz-label", "a": "aaa-label"}
+    result = scorer.score_by_stratum(per_item, strata)
+    assert list(result.keys()) == ["aaa-label", "zzz-label"]
+
+
+# --- validate_manifest stratification field validation -------------------
+
+def test_validate_manifest_rejects_bad_diff_size():
+    m = _valid_manifest()
+    m["items"][0]["diff_size"] = "XL"  # not in {S, M, L}
+    errors = scorer.validate_manifest(m)
+    assert any("diff_size" in e for e in errors)
+    assert len(errors) == 1  # only the one stratification error
+
+
+def test_validate_manifest_rejects_bad_split():
+    m = _valid_manifest()
+    m["items"][0]["split"] = "train"  # not in {iterate, holdout}
+    errors = scorer.validate_manifest(m)
+    assert any("split" in e for e in errors)
+    assert len(errors) == 1
+
+
+def test_validate_manifest_accepts_absent_stratification_fields():
+    # A manifest with no stratification fields at all must still pass.
+    m = _valid_manifest()
+    for item in m["items"]:
+        for f in ("source", "lang", "diff_size", "risk_domain", "difficulty", "split"):
+            item.pop(f, None)
+    assert scorer.validate_manifest(m) == []
+
+
+def test_validate_manifest_accepts_valid_stratification_fields():
+    m = _valid_manifest()
+    m["items"][0].update({
+        "source": "seeded",
+        "lang": "python",
+        "diff_size": "S",
+        "risk_domain": "subprocess",
+        "difficulty": "easy",
+        "split": "iterate",
+    })
+    assert scorer.validate_manifest(m) == []
+
+
+def test_validate_manifest_rejects_empty_string_in_str_field():
+    m = _valid_manifest()
+    m["items"][0]["source"] = ""  # empty string is not allowed when present
+    errors = scorer.validate_manifest(m)
+    assert any("source" in e for e in errors)

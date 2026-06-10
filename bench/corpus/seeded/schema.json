@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AUDIT-0 seeded corpus manifest",
-  "description": "Ground-truth-labeled synthetic diffs. Enforced programmatically by bench.scorer.validate_manifest (kept dependency-free — this file is the human-readable contract; the validator is the executable one).",
+  "description": "Ground-truth-labeled synthetic diffs. Enforced programmatically by bench.scorer.validate_manifest (kept dependency-free — this file is the human-readable contract; the validator is the executable one). Items may carry optional stratification fields (source, lang, diff_size, risk_domain, difficulty, split, provenance) validated by validate_manifest when present; absent fields are never an error.",
   "type": "object",
   "required": ["items"],
   "properties": {
@@ -43,6 +43,45 @@
                 "line": {"type": "integer", "minimum": 1},
                 "description": {"type": "string", "minLength": 1}
               }
+            }
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Origin of this item (e.g. 'seeded', 'real', 'synthetic'). Optional."
+          },
+          "lang": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Primary programming language of the diff (e.g. 'python'). Optional."
+          },
+          "risk_domain": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The functional area the bug targets (e.g. 'subprocess', 'config', 'parsing'). Optional."
+          },
+          "difficulty": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Subjective difficulty for a reviewer to find the bug ('easy', 'medium', 'hard'). Optional."
+          },
+          "diff_size": {
+            "type": "string",
+            "enum": ["S", "M", "L"],
+            "description": "Rough size of the diff: S=small single-hunk, M=medium, L=large/multi-hunk. Optional."
+          },
+          "split": {
+            "type": "string",
+            "enum": ["iterate", "holdout"],
+            "description": "Dataset split: 'iterate' for tuning/development, 'holdout' for held-out evaluation. Optional."
+          },
+          "provenance": {
+            "type": "object",
+            "description": "Optional traceability record for this item.",
+            "properties": {
+              "source": {"type": "string"},
+              "date": {"type": "string"},
+              "ref": {"type": "string"}
             }
           }
         }

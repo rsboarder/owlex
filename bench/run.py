@@ -195,6 +195,68 @@ def _variant_block(item_records: list[dict], scored: dict | None) -> dict:
     return block
 
 
+# Source names accepted by --sources (user-facing) → include keys for load_corpus.
+_SOURCES_MAP: dict[str, str] = {
+    "seeded": "seeded",
+    "mined": "mined",
+    "mutants": "mutants",
+    "dataset": "dataset",
+}
+# db_labeled / db-llm-label is intentionally absent: no diff/post_image, not runnable.
+_DEFAULT_SOURCES = "seeded,mined,mutants,dataset"
+
+
+def _is_runnable(item: dict) -> bool:
+    """Return True when an item has a non-empty diff or post_image (i.e. can be reviewed)."""
+    return bool(item.get("diff") or item.get("post_image"))
+
+
+def _load_stratified(args: argparse.Namespace) -> list[dict]:
+    """Load, filter, and cap the stratified corpus; logs per-source counts to stderr."""
+    raw_sources = [s.strip() for s in args.sources.split(",") if s.strip()]
+    unknown = [s for s in raw_sources if s not in _SOURCES_MAP]
+    if unknown:
+        raise SystemExit(f"unknown --sources values: {unknown!r}; known: {sorted(_SOURCES_MAP)}")
+
+    include = tuple(_SOURCES_MAP[s] for s in raw_sources)
+    all_items = corpus.load_corpus(root=os.path.join(_HERE, "corpus"), include=include)
+
+    # Keep only items that have reviewable content.
+    runnable = [it for it in all_items if _is_runnable(it)]
+
+    # Per-source cap: take first N items by sorted id (deterministic).
+    per_source = getattr(args, "per_source", 0)
+    if per_source > 0:
+        by_source: dict[str, list[dict]] = {}
+        for it in runnable:
+            by_source.setdefault(it.get("source", ""), []).append(it)
+        capped: list[dict] = []
+        for src, src_items in by_source.items():
+            src_items_sorted = sorted(src_items, key=lambda x: x.get("id", ""))
+            capped.extend(src_items_sorted[:per_source])
+        runnable = capped
+
+    # Global cap.
+    max_items = getattr(args, "max_items", 0)
+    if max_items > 0:
+        runnable = runnable[:max_items]
+
+    # Log per-source counts so the operator sees what will be run.
+    source_counts: dict[str, int] = {}
+    for it in runnable:
+        source_counts[it.get("source", "unknown")] = source_counts.get(it.get("source", "unknown"), 0) + 1
+    runs = args.runs
+    print(
+        f"[bench] stratified corpus: {len(runnable)} runnable items "
+        f"(~{len(runnable) * runs} codex call{'s' if len(runnable) * runs != 1 else ''})",
+        file=sys.stderr,
+    )
+    for src, cnt in sorted(source_counts.items()):
+        print(f"[bench]   {src}: {cnt} items × {runs} runs = {cnt * runs} calls", file=sys.stderr)
+
+    return runnable
+
+
 def execute(args: argparse.Namespace) -> dict:
     """Run the benchmark and return the report dict (does not write it)."""
     if args.target not in TARGETS:
@@ -211,6 +273,10 @@ def execute(args: argparse.Namespace) -> dict:
             variants = ["raw_diff", "prose"]
         else:
             variants = [args.input_variant]
+    elif args.corpus == "stratified":
+        items = _load_stratified(args)
+        line_window = args.line_window or scorer.DEFAULT_LINE_WINDOW
+        variants = ["raw_diff"]  # stratified items carry real diffs; prose is seeded-only
     else:  # real: unlabeled, raw diff only, no scoring
         items = corpus.load_real(args.real_dir)
         line_window = args.line_window or scorer.DEFAULT_LINE_WINDOW
@@ -218,7 +284,7 @@ def execute(args: argparse.Namespace) -> dict:
 
     # Materialize each seeded item into a temp git repo so the reviewer has real
     # files to read (faithful to production repo access — both input variants get
-    # the same file access; only the prompt differs). Skipped for dry / real.
+    # the same file access; only the prompt differs). Skipped for dry / real / stratified.
     workdirs: dict[str, str] = {}
     if args.corpus == "seeded" and not args.dry:
         workdirs = {item["id"]: _materialize(item) for item in items}
@@ -257,6 +323,8 @@ def execute(args: argparse.Namespace) -> dict:
             item_records.append({"id": item.get("id"), "variant": variant, "runs": runs})
             if args.corpus == "seeded":
                 scored_items.append({"item": item, "runs": [r["findings"] for r in runs]})
+            elif args.corpus == "stratified" and item.get("bugs"):
+                scored_items.append({"item": item, "runs": [r["findings"] for r in runs]})
 
         # Score at both granularities from the SAME captured findings (pure, no
         # extra codex): `line` is the strict raw-diff metric; `file` is the fair
@@ -264,6 +332,8 @@ def execute(args: argparse.Namespace) -> dict:
         # `verified` re-scores the citation-checked set (AUDIT-1) — the before/
         # after reads as `line.precision` (было) vs `verified.line.precision`
         # (стало); also a free post-process, no extra codex.
+        # For stratified mode, only score items that carry labeled bugs; unlabeled
+        # items are still run (cost measurement) but excluded from precision/recall.
         scored = None
         if args.corpus == "seeded":
             scored = {
@@ -273,6 +343,10 @@ def execute(args: argparse.Namespace) -> dict:
                     "line": scorer.score_corpus(scored_items, line_window=line_window, granularity="line", verify=True),
                     "file": scorer.score_corpus(scored_items, line_window=line_window, granularity="file", verify=True),
                 },
+            }
+        elif args.corpus == "stratified" and scored_items:
+            scored = {
+                "line": scorer.score_corpus(scored_items, line_window=line_window, granularity="line"),
             }
         results[variant] = _variant_block(item_records, scored)
 
@@ -339,7 +413,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="bench/run.py",
         description="AUDIT-0 benchmark runner for the cross-model solution-audit reviewer.",
     )
-    p.add_argument("--corpus", choices=["seeded", "real"], required=True)
+    p.add_argument("--corpus", choices=["seeded", "real", "stratified"], required=True)
     p.add_argument("--target", default="cross_model",
                    help="audit sub-step under test (default: cross_model)")
     p.add_argument("--runs", type=int, default=5, help="K runs per item for variance (default: 5)")
@@ -360,6 +434,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help=f"write report to {os.path.join('bench', 'baselines')}/<target>.json")
     p.add_argument("--manifest", default=DEFAULT_MANIFEST, help="seeded manifest path")
     p.add_argument("--real-dir", default=DEFAULT_REAL_DIR, help="real-corpus directory")
+    p.add_argument(
+        "--sources",
+        default=_DEFAULT_SOURCES,
+        help=(
+            "stratified only: comma-separated source names to include "
+            f"(default: {_DEFAULT_SOURCES!r}, excludes db_labeled which has no diff/post_image)"
+        ),
+    )
+    p.add_argument(
+        "--per-source",
+        type=int,
+        default=0,
+        dest="per_source",
+        help="stratified only: max items per source, sorted deterministically by id (0 = no cap)",
+    )
+    p.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        dest="max_items",
+        help="stratified only: global item cap applied after per-source cap (0 = no cap)",
+    )
     return p.parse_args(argv)
 
 

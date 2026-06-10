@@ -18,6 +18,8 @@ citations drift by a few lines, so exact-match would read recall ≈ 0.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import statistics
@@ -334,6 +336,10 @@ MIN_BUGS = 10
 MIN_BUG_TYPES = 3
 MIN_DECOYS = 2
 
+# Vocab for optional stratification fields validated below.
+_DIFF_SIZE_VOCAB = {"S", "M", "L"}
+_SPLIT_VOCAB = {"iterate", "holdout"}
+
 
 def validate_manifest(manifest: dict) -> list[str]:
     """Validate a seeded manifest against the AUDIT-0 contract.
@@ -389,6 +395,21 @@ def validate_manifest(manifest: dict) -> list[str]:
                 errors.append(f"{dw}.line must be a positive integer")
             total_decoys += 1
 
+        # Optional stratification fields — validate only when present (absent = no error).
+        if "diff_size" in item and item["diff_size"] not in _DIFF_SIZE_VOCAB:
+            errors.append(
+                f"{where}.diff_size {item['diff_size']!r} not in {sorted(_DIFF_SIZE_VOCAB)}"
+            )
+        if "split" in item and item["split"] not in _SPLIT_VOCAB:
+            errors.append(
+                f"{where}.split {item['split']!r} not in {sorted(_SPLIT_VOCAB)}"
+            )
+        for str_field in ("source", "lang", "risk_domain", "difficulty"):
+            if str_field in item:
+                val = item[str_field]
+                if not isinstance(val, str) or not val:
+                    errors.append(f"{where}.{str_field} must be a non-empty string when present")
+
     if total_bugs < MIN_BUGS:
         errors.append(f"need ≥{MIN_BUGS} bugs, found {total_bugs}")
     if len(bug_types) < MIN_BUG_TYPES:
@@ -398,3 +419,216 @@ def validate_manifest(manifest: dict) -> list[str]:
     if total_decoys < MIN_DECOYS:
         errors.append(f"need ≥{MIN_DECOYS} decoys, found {total_decoys}")
     return errors
+
+
+# --- stratification helpers -----------------------------------------------
+
+# Recommended (NOT enforced) bug_type taxonomy for coverage reporting:
+BUG_TYPE_TAXONOMY = (
+    "logic",
+    "boundary",
+    "concurrency",
+    "resource",
+    "security",
+    "api-contract",
+)
+
+STRATUM_FIELDS = ("source", "lang", "diff_size", "risk_domain", "difficulty", "split")
+
+
+def corpus_hash(manifest: dict) -> str:
+    """Stable sha256 over each item's identity + ground-truth fields.
+
+    Hashes only ``(id, file, diff_path, bugs, decoys)`` — NOT the inlined
+    ``diff``/``post_image`` — so the value is identical before and after
+    ``load_seeded()``.  Use this as a freeze/version anchor to detect corpus
+    mutations between benchmark runs (anti-p-hacking: a changed hash means the
+    experiment is a new experiment).
+    """
+    stable = [
+        {
+            "id": item.get("id"),
+            "file": item.get("file"),
+            "diff_path": item.get("diff_path"),
+            "bugs": item.get("bugs"),
+            "decoys": item.get("decoys"),
+        }
+        for item in manifest.get("items", [])
+    ]
+    serialized = json.dumps(stable, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def stratum_map(manifest: dict, field: str) -> dict[str, str]:
+    """Map each item id to its stratum label for ``field``.
+
+    Items missing the field are assigned ``"_unset"`` so every item appears in
+    exactly one stratum bucket even before full annotation.
+    """
+    return {
+        item["id"]: str(item.get(field, "_unset"))
+        for item in manifest.get("items", [])
+        if "id" in item
+    }
+
+
+def corpus_stats(items: list[dict]) -> dict:
+    """Corpus-robustness instrument metrics for a flat list of corpus items.
+
+    Pure — no I/O.  Input is the list returned by ``load_corpus()`` or any
+    flat mix of corpus items from different sources.
+
+    Returned keys:
+
+    ``total``
+        Total item count.
+
+    ``by_source``
+        ``{source_value: count}`` — distribution across corpus origins.
+
+    ``by_bug_type``
+        ``{bug_type: count}`` — across all ``bugs`` lists in all items.
+
+    ``by_diff_size``
+        ``{diff_size: count}`` — items that carry the field; others ignored.
+
+    ``by_split``
+        ``{split: count}`` — "iterate" vs "holdout"; items without the field
+        mapped to ``"_unset"``.
+
+    ``objective_label_pct``
+        Items are *labeled* when they have ≥1 bug.  Among labeled items,
+        *objective* means ``source ∈ {seeded, real-fix, mutant}``; *soft*
+        means ``source ∈ {db-llm-label, documented-soft}``.
+        Returns ``{"labeled": n, "objective": n, "soft": n, "pct_objective": float|None}``.
+
+    ``n_decoys``
+        Count of items that have a non-empty ``decoys`` list.
+
+    ``bug_type_coverage``
+        ``{"present": [...], "missing": [...]}`` — which of
+        ``BUG_TYPE_TAXONOMY`` appear / are absent.
+
+    ``content_hash``
+        ``corpus_hash``-style sha256 over ``(id, file, bugs, decoys)`` for
+        every item — the freeze/version anchor.
+    """
+    total = len(items)
+    by_source: dict[str, int] = {}
+    by_bug_type: dict[str, int] = {}
+    by_diff_size: dict[str, int] = {}
+    by_split: dict[str, int] = {}
+    n_decoys = 0
+    labeled = 0
+    objective_labeled = 0
+    soft_labeled = 0
+
+    _OBJECTIVE_SOURCES = {"seeded", "real-fix", "mutant", "dataset"}
+    _SOFT_SOURCES = {"db-llm-label", "documented-soft", "flywheel"}
+
+    for item in items:
+        src = item.get("source", "_unset")
+        by_source[src] = by_source.get(src, 0) + 1
+
+        bugs = item.get("bugs") or []
+        for bug in bugs:
+            bt = bug.get("bug_type", "_unset")
+            by_bug_type[bt] = by_bug_type.get(bt, 0) + 1
+
+        if bugs:
+            labeled += 1
+            if src in _OBJECTIVE_SOURCES:
+                objective_labeled += 1
+            elif src in _SOFT_SOURCES:
+                soft_labeled += 1
+
+        ds = item.get("diff_size")
+        if ds is not None:
+            by_diff_size[ds] = by_diff_size.get(ds, 0) + 1
+
+        split = item.get("split", "_unset")
+        by_split[split] = by_split.get(split, 0) + 1
+
+        decoys = item.get("decoys") or []
+        if decoys:
+            n_decoys += 1
+
+    pct_objective = (objective_labeled / labeled) if labeled else None
+
+    present = [bt for bt in BUG_TYPE_TAXONOMY if bt in by_bug_type]
+    missing = [bt for bt in BUG_TYPE_TAXONOMY if bt not in by_bug_type]
+
+    # Content hash: stable over (id, file, bugs, decoys) — mirrors corpus_hash
+    # but works on a flat list rather than a manifest dict.
+    stable = [
+        {
+            "id": item.get("id"),
+            "file": item.get("file"),
+            "bugs": item.get("bugs"),
+            "decoys": item.get("decoys"),
+        }
+        for item in items
+    ]
+    serialized = json.dumps(stable, sort_keys=True, ensure_ascii=False)
+    content_hash = hashlib.sha256(serialized.encode()).hexdigest()
+
+    return {
+        "total": total,
+        "by_source": by_source,
+        "by_bug_type": by_bug_type,
+        "by_diff_size": by_diff_size,
+        "by_split": by_split,
+        "objective_label_pct": {
+            "labeled": labeled,
+            "objective": objective_labeled,
+            "soft": soft_labeled,
+            "pct_objective": pct_objective,
+        },
+        "n_decoys": n_decoys,
+        "bug_type_coverage": {"present": present, "missing": missing},
+        "content_hash": content_hash,
+        "derived_holdout": sum(
+            1 for v in derive_holdout(items).values() if v == "holdout"
+        ),
+    }
+
+
+def derive_holdout(items: list[dict], holdout_frac: float = 0.2) -> dict[str, str]:
+    """Deterministic, stratified held-out assignment — the anti-p-hacking split.
+
+    Held-out membership is a pure function of the item ``id`` (sha256), so it is
+    reproducible across runs and CANNOT be hand-tuned to flip an A/B: you cannot
+    move an item in or out of the held-out set without changing its id.  Within
+    each ``source`` stratum the lowest-hash ``holdout_frac`` share is held out,
+    so every source contributes proportionally rather than one source dominating
+    the held-out set.  Returns ``{id: "holdout" | "iterate"}``.
+    """
+    by_source: dict[str, list[tuple[str, str]]] = {}
+    for item in items:
+        iid = str(item.get("id", ""))
+        h = hashlib.sha256(iid.encode()).hexdigest()
+        by_source.setdefault(item.get("source", "_unset"), []).append((h, iid))
+
+    out: dict[str, str] = {}
+    for rows in by_source.values():
+        rows.sort()
+        n_hold = int(len(rows) * holdout_frac)
+        for i, (_, iid) in enumerate(rows):
+            out[iid] = "holdout" if i < n_hold else "iterate"
+    return out
+
+
+def score_by_stratum(per_item: list[dict], strata: dict[str, str]) -> dict:
+    """Aggregate ``score_corpus(...)["per_item"]`` results grouped by stratum.
+
+    ``strata`` is the output of ``stratum_map(manifest, field)``.  For each
+    item, all its ``run_scores`` are pooled under the item's stratum label; the
+    label bucket is then aggregated with the same ``aggregate()`` used corpus-
+    wide so the numbers are directly comparable.  Returned dict is sorted by
+    label for deterministic output.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for pi in per_item:
+        label = strata.get(pi["id"], "_unlabeled")
+        buckets.setdefault(label, []).extend(pi["run_scores"])
+    return {label: aggregate(buckets[label]) for label in sorted(buckets)}

@@ -1,6 +1,18 @@
-# Owlex Audit Hardening — Plane Deployment Plan
+# Owlex Audit Hardening — Plan
 
-**Status:** drafted 2026-06-09, NOT yet deployed to Plane (Plane API returned HTTP 403 — token expired/no `chapta` access; re-deploy once auth restored).
+**Status:** tracked in the local **Backlog.md** project (label `audit-hardening`) as of 2026-06-10 — NOT Plane (Plane API was 403; owlex routes new task work to Backlog.md per the repo convention).
+
+**Backlog mapping (AUDIT-N → task-id):**
+
+| AUDIT | Backlog | Status | AUDIT | Backlog | Status |
+|-------|---------|--------|-------|---------|--------|
+| AUDIT-0 | `TASK-1` | Done | AUDIT-3 | `TASK-5` | To Do |
+| AUDIT-2 | `TASK-2` | Done | AUDIT-4 | `TASK-6` | To Do |
+| AUDIT-1 | `TASK-3` | Done | AUDIT-5 | `TASK-7` | To Do |
+| AUDIT-6 | `TASK-4` | To Do | AUDIT-9 | `TASK-8` | To Do |
+| AUDIT-10 | `TASK-9` | To Do | | | |
+
+**Handovers:** AUDIT-0 → `docs/handovers/audit-0-benchmark-harness.md`; AUDIT-1 & AUDIT-2 → `docs/handovers/audit-1-verify-cross-model-findings.md`. Remaining tickets get a dedicated handover when started.
 **Source:** self-challenge of the `solution-audit` cross-model (`second_opinion`) approach (session 2026-06-09).
 **Hard constraint (user):** every ticket REQUIRES a BEFORE/AFTER benchmark, run through the AUDIT-0 harness.
 **Corpus decision:** **seeded + real** — synthetic diffs with known injected bugs (ground-truth for precision/recall, incl. decoys) PLUS real owlex git-history diffs (cost/realism).
@@ -14,6 +26,7 @@
 ## Execution order (step-by-step via handover)
 `AUDIT-0` → `AUDIT-2` → `AUDIT-1` → `AUDIT-6` → `AUDIT-3` → `AUDIT-4` → `AUDIT-5` → `AUDIT-9`
 (AUDIT-5 and AUDIT-9 touch the `FRAME`/`_cmd` path; sequence them after AUDIT-2/AUDIT-6 to avoid conflicts.)
+**AUDIT-10** (corpus scale-up) runs anytime after AUDIT-0, but **ideally before re-validating AUDIT-3/AUDIT-4** — those need robust numbers, and the current 8+3 corpus is over-fit-prone (risk P0/P2).
 
 ## Dependencies
 | Task | Blocked by |
@@ -117,3 +130,29 @@
 - Success: duplication eliminated (one source of truth), argv byte-identical, zero behavior change, suite green.
 **Files:** `owlex/_codex.py` (new), `owlex/second_opinion.py`, `owlex/agreement.py`, tests.
 **Depends on:** none. **Note:** touches `_cmd` — sequence after AUDIT-2/AUDIT-5 if they change `_cmd`/FRAME.
+
+## AUDIT-10 — Scale & stratify the benchmark corpus (+ self-bootstrapping flywheel)
+**Problem:** the AUDIT-0 corpus is small (8 seeded + 3 real) → over-fit risk and directional-not-robust numbers (risk P0/P2). Hand-authoring labeled bugs is slow and biased. We need ground-truth-labeled, realistic, **stratified** review targets at scale, without p-hacking — and ideally a corpus that grows itself from real usage. The bottleneck is **ground-truth labels**, not diffs — so harvest where labels already exist.
+**Change (sources, priority order):**
+1. **DB extractor (read-only)** — `bench/extract_db.py`: pull the **~89 diff/code-bearing council prompts** from `~/.owlex/owlex.db` (`calls.prompt_text` where `round=1` and looks like a diff/code review) + their `result_text` (candidate findings). These become realistic review **targets**. ⚠ DB ratings (`agent_scores`) and `agreement_score` are **NOT** usable as ground-truth labels — ratings are Claude-blind (circularity, see dropped #8) and `agreement_score` is contaminated by judge-fallback (332/391 "low" is mostly overlap-heuristic artifact). `calls.input_tokens` are NULL — don't rely on them for cost. **Extract targets only; label objectively (below).**
+2. **Bug-fix mining** — `git log --grep -iE 'fix|bug|regression|revert'`: pre-fix diff = target, fix-commit changed lines = ground-truth bug location, message = bug_type/description. **Especially: convert each `docs/solutions/` doc + the CLAUDE.md "Learned Patterns" entries into corpus items** (documented real bug + fix = high-quality labeled item).
+3. **External datasets** — **BugsInPy** (real Python bugs + fix locations + tests) for volume/diversity, reduces owlex over-fit.
+4. **Mutation injection** — `cosmic-ray`/`mutmut` on known-good owlex modules → mutants with exact labels; **equivalent mutants** (behavior-preserving) → decoy/precision set.
+5. **Decoys from refactor/chore commits** — `git log --grep -iE 'refactor|chore|style|cleanup'` = changes with NO bug → any finding = false positive (precision corpus).
+6. **Stratification** — tag each item: `bug_type` (logic/boundary/concurrency/resource/security/api-contract), `lang`, `diff_size` (S/M/L), `risk_domain`, `source` (db/real-fix/dataset/mutant/decoy), `difficulty`. **Report metrics per-stratum**, not just aggregate.
+7. **Anti-p-hacking discipline** — freeze + version (hash) the corpus; keep a **held-out split** not looked at during iteration; add items for **coverage**, never to flip an A/B; record provenance (source + date).
+8. **Self-bootstrapping flywheel (durable win)** — persist real `solution-audit` runs into a new table `{diff_hash, findings[file:line], verified(Phase-2 from AUDIT-1), panel_verdict, outcome}` so real usage becomes labeled corpus over time. Owlex already persists council data in SQLite (`calls`/`agent_scores`) — extend the pattern to the audit leg (`second_opinion` is currently ephemeral, persists nothing).
+9. **(minor) Fill `calls.input_tokens/output_tokens`** (currently NULL) so cost-in-tokens becomes available for cost benchmarks.
+**Acceptance:**
+- `bench/extract_db.py` (read-only) yields ≥N realistic targets from the council DB, with provenance, using NO DB ratings/agreement as labels.
+- bug-fix mining harvests labeled items from owlex history + `docs/solutions/` (≥M items).
+- corpus stratified (metadata schema extended) + frozen/versioned + held-out split; decoy set present (precision measurable).
+- `bench/README.md` documents "how to grow the corpus without p-hacking".
+- flywheel: at minimum a design (ideally impl) for persisting audit-runs as future corpus.
+- Tiered size: cheap smoke subset (~10-12) + full stratified set (~40-60), **bounded by benchmark cost** (codex rate-limit — handover risk P1).
+**Benchmark (было/стало):** the corpus IS the measurement instrument, so the metric is **corpus robustness**, not a feature delta:
+- Metric: corpus size + stratum coverage (# bug_types/sources, S/M/L spread) + % objectively-labeled (vs hand-authored) + **variance/CI of a downstream metric**.
+- Procedure: re-run an existing result (e.g. AUDIT-1 precision or AUDIT-2 recall) on (было) the 8+3 corpus vs (стало) the scaled stratified corpus.
+- Success: scaled corpus hits the coverage/labeling targets AND a prior AUDIT result either confirms with **tighter CI** or is **honestly revised** on the more representative set — with no p-hacking (held-out split + provenance documented).
+**Files:** `bench/extract_db.py` (new, read-only), `bench/mine_fixes.py` (new), `bench/corpus/` (expanded), `bench/corpus/**/manifest.json` (stratification schema), `bench/README.md`; optionally a `calls`-token fill + an audit-runs persistence table/migration.
+**Depends on:** AUDIT-0. Independent of AUDIT-1..6/9. **Note:** the flywheel sub-part reuses AUDIT-1's Phase-2 "verified" flag as a quasi-label.
