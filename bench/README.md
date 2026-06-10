@@ -78,6 +78,55 @@ Each seeded diff is **clean except for its planted bugs + decoys**, so any
 finding matching neither is a hallucination (also a false positive). Aggregates
 are micro-averaged (every run of every item pooled with equal weight).
 
+## Citation verification (AUDIT-1)
+
+Phase 2 of `solution-audit` mechanically citation-checks findings — open each
+`file:line`, drop the ones that don't resolve. The harness models that as a
+**pure** step (`scorer.verify_findings`): a finding survives only if its cited
+file exists in the materialized post-image **and** its line is in range (with the
+same `± line_window` EOF tolerance, so a true positive cited a hair past EOF is
+never dropped). A hallucinated file or an out-of-range line can't be opened, so
+it's dropped rather than counted as a false positive.
+
+Every seeded run is therefore scored **twice**, for free (no extra codex):
+
+- `results.<variant>.scored.line` — raw, **before** verification (`было`).
+- `results.<variant>.scored.verified.line` — citation-checked, **after** (`стало`),
+  plus `corpus_dropped` (`total` + `by_reason`: `file_unresolved` / `line_out_of_range`).
+
+Verification only removes citation-unresolvable findings (never a finding that
+lands on a planted bug), so **verified precision ≥ raw precision by construction**
+and recall is preserved. The win is real only when the reviewer actually
+hallucinates citations — that's what the bait item is for:
+
+- **`seed-09-bait-hallucination`** — a real off-by-one in `owlex/retry_budget.py`
+  (resolves, survives) next to a call into `owlex/backoff.py`, a module
+  deliberately absent from the item's post-image. A reviewer tempted to flag the
+  unseen backoff cap cites `owlex/backoff.py:<n>` → `file_unresolved` → dropped.
+  (Deterministic demo without codex: a `retry_budget.py:7` + `backoff.py:4`
+  finding pair scores raw precision 0.5 → verified 1.0, 1 dropped.)
+
+The before/after reads as `scored.<g>.corpus_aggregate.precision` vs
+`scored.verified.<g>.corpus_aggregate.precision`. AUDIT-1's precision metric uses
+**`line`** granularity (verification is about exact citations resolving).
+
+> **First live bait probe (2026-06-10, gpt-5.5/high, K=5, `raw_diff`, 5/5 ok) — honest
+> negative: 0 findings dropped.** The reviewer found the real bug (recall 0.80) and produced one
+> false positive — but cited it at `retry_budget.py:1` (the real import line), **not** the absent
+> `owlex/backoff.py`. A citation-disciplined model with repo access won't fabricate a line in a
+> file it can't open, so the file-resolution magnet didn't bite; raw precision == verified
+> precision (0.60). **Accepted as-is — the magnet is deliberately NOT tuned until it bites** (that
+> would p-hack the result, the AUDIT-0 P0 risk).
+>
+> **What this measures:** mechanical citation-verification has **low yield** on this workload —
+> the cross-model rarely emits a non-resolving citation. Its residual false positives (e.g.
+> flagging a benign import) *resolve*, so they sit outside mechanical reach; catching them needs
+> **semantic** verification (does the cited line actually carry the claimed bug?), which requires
+> the Opus judge and isn't script-callable (plan Open Q1 / AUDIT-3 territory). AUDIT-1 still ships:
+> it's a free, correct safety net for the low-but-nonzero hallucination case (proven in
+> `tests/test_scorer.py`), **not** a measured precision gain. Same shape as AUDIT-2's honest
+> correction — the value is real but it isn't the one the premise predicted.
+
 ## Adding a corpus item
 
 **Seeded (labeled):**
@@ -123,6 +172,14 @@ snapshot (aggregates + cost, no raw records) so it stays diffable in git.
 
 Refresh with `python bench/run.py --corpus seeded --runs 5 --baseline`
 (`--concurrency 5` ≈ 7 min; ~80 codex calls).
+
+> **Baseline is the 8-item (`seed-01..08`) snapshot — it predates the `verified`
+> block and the AUDIT-1 bait item.** `seed-09-bait-hallucination` and the
+> raw-vs-`verified` precision columns land on the next full re-baseline, deferred
+> on cost (a 9-item × 2-variant × K=5 refresh is ~90 codex calls — near the
+> rate-limit ceiling; prefer targeted `--input-variant raw_diff` probes on the
+> bait item while iterating). The verify mechanism itself is proven
+> deterministically in `tests/test_scorer.py`.
 
 > **The honest result does NOT support AUDIT-2's recall premise — it's a cost win.**
 > With repo access (faithful to production — both variants get the materialized files

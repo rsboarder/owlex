@@ -178,6 +178,98 @@ def test_score_corpus_per_item_and_pooled():
     assert result["corpus_aggregate"]["recall"]["mean"] == 0.75
 
 
+# --- verify_findings (AUDIT-1 citation-check) ----------------------------
+
+# A 50-line post-image file the findings below cite into.
+POST_IMAGE = {"owlex/worker.py": "x\n" * 50}
+
+
+def test_verify_keeps_resolving_finding():
+    findings = [{"file": "owlex/worker.py", "line": 42, "snippet": ""}]
+    out = scorer.verify_findings(findings, POST_IMAGE, line_window=3)
+    assert out["kept"] == findings
+    assert out["dropped"] == []
+
+
+def test_verify_drops_hallucinated_file():
+    findings = [{"file": "owlex/ghost.py", "line": 5, "snippet": ""}]
+    out = scorer.verify_findings(findings, POST_IMAGE, line_window=3)
+    assert out["kept"] == []
+    assert len(out["dropped"]) == 1
+    assert out["dropped"][0]["reason"] == "file_unresolved"
+
+
+def test_verify_drops_out_of_range_line():
+    findings = [{"file": "owlex/worker.py", "line": 999, "snippet": ""}]
+    out = scorer.verify_findings(findings, POST_IMAGE, line_window=3)
+    assert out["kept"] == []
+    assert out["dropped"][0]["reason"] == "line_out_of_range"
+
+
+def test_verify_keeps_line_within_eof_tolerance():
+    # A real 50-line file cited at 52 (= 50 + window-1): LLM drift past EOF on a
+    # real file, not a hallucination — kept, so a TP near the end is never lost.
+    findings = [{"file": "owlex/worker.py", "line": 52, "snippet": ""}]
+    out = scorer.verify_findings(findings, POST_IMAGE, line_window=3)
+    assert out["kept"] == findings
+
+
+def test_verify_keeps_lineless_finding_when_file_resolves():
+    findings = [{"file": "owlex/worker.py", "line": None, "snippet": ""}]
+    out = scorer.verify_findings(findings, POST_IMAGE, line_window=3)
+    assert out["kept"] == findings
+
+
+def test_score_item_verify_drops_nonresolving_and_records_it():
+    item = {
+        "id": "seed-x",
+        "bugs": [{"bug_type": "boundary", "file": "owlex/worker.py", "line": 42, "description": "d"}],
+        "decoys": [],
+        "post_image": POST_IMAGE,
+    }
+    # one run: 1 real (TP) + 1 hallucinated file + 1 out-of-range line
+    runs = [[
+        {"file": "owlex/worker.py", "line": 42, "snippet": ""},
+        {"file": "owlex/ghost.py", "line": 5, "snippet": ""},
+        {"file": "owlex/worker.py", "line": 999, "snippet": ""},
+    ]]
+    si = scorer.score_item(item, runs, line_window=3, granularity="line", verify=True)
+    assert si["dropped"]["total"] == 2
+    assert si["dropped"]["by_reason"] == {"file_unresolved": 1, "line_out_of_range": 1}
+    # surviving set is just the TP → precision 1.0
+    assert si["run_scores"][0]["precision"] == 1.0
+    assert si["run_scores"][0]["tp"] == 1
+
+
+def test_verified_precision_is_at_least_raw_precision():
+    # Same fixture, scored raw vs verified: verification removes the two
+    # unresolvable false positives, so precision rises (1/3 → 1.0) and a true
+    # positive is never dropped.
+    item = {
+        "id": "seed-x",
+        "bugs": [{"bug_type": "boundary", "file": "owlex/worker.py", "line": 42, "description": "d"}],
+        "decoys": [],
+        "post_image": POST_IMAGE,
+    }
+    runs = [[
+        {"file": "owlex/worker.py", "line": 42, "snippet": ""},
+        {"file": "owlex/ghost.py", "line": 5, "snippet": ""},
+        {"file": "owlex/worker.py", "line": 999, "snippet": ""},
+    ]]
+    items_runs = [{"item": item, "runs": runs}]
+    raw = scorer.score_corpus(items_runs, line_window=3, granularity="line")
+    verified = scorer.score_corpus(items_runs, line_window=3, granularity="line", verify=True)
+    raw_p = raw["corpus_aggregate"]["precision"]["mean"]
+    ver_p = verified["corpus_aggregate"]["precision"]["mean"]
+    assert abs(raw_p - 1 / 3) < 1e-9
+    assert ver_p == 1.0
+    assert ver_p >= raw_p
+    # recall is preserved — verification never drops the true positive
+    assert verified["corpus_aggregate"]["recall"]["mean"] == raw["corpus_aggregate"]["recall"]["mean"]
+    assert verified["corpus_dropped"]["total"] == 2
+    assert verified["corpus_dropped"]["by_reason"] == {"file_unresolved": 1, "line_out_of_range": 1}
+
+
 # --- validate_manifest ---------------------------------------------------
 
 def _valid_manifest():

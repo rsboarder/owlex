@@ -69,10 +69,15 @@ def test_dry_seeded_run_produces_scored_report_for_both_variants():
     assert report["generated_with"]["dry"] is True
     for variant in ("raw_diff", "prose"):
         block = report["results"][variant]
-        assert set(block["scored"]) == {"line", "file"}  # both granularities scored
+        # raw line/file + the AUDIT-1 verified block
+        assert set(block["scored"]) == {"line", "file", "verified"}
+        assert set(block["scored"]["verified"]) == {"line", "file"}
         # dry → no findings → recall 0, detection_rate 0 at both granularities
         assert block["scored"]["line"]["corpus_aggregate"]["recall"]["mean"] == 0.0
         assert block["scored"]["file"]["corpus_aggregate"]["recall"]["mean"] == 0.0
+        # dry → no citations → nothing to verify, nothing dropped
+        assert block["scored"]["verified"]["line"]["corpus_dropped"]["total"] == 0
+        assert block["scored"]["verified"]["line"]["corpus_aggregate"]["recall"]["mean"] == 0.0
         assert block["cost"]["tokens"] is None
         assert len(block["per_item_runs"]) == n_items  # every seeded item scored
 
@@ -99,10 +104,12 @@ def test_compact_baseline_drops_raw_records_keeps_aggregates():
     report = run.execute(args)
     compact = run.compact_baseline(report)
     block = compact["results"]["raw_diff"]
-    assert "per_item_runs" not in block               # raw records stripped
-    assert set(block["scored"]) == {"line", "file"}   # both granularities kept
+    assert "per_item_runs" not in block                          # raw records stripped
+    assert set(block["scored"]) == {"line", "file", "verified"}  # granularities + verified kept
     assert "corpus_aggregate" in block["scored"]["line"]
     assert all(set(pi) == {"id", "aggregate"} for pi in block["scored"]["file"]["per_item"])
+    # the verified block survives compaction with its drop accounting
+    assert "corpus_dropped" in block["scored"]["verified"]["line"]
     assert compact["target"] == report["target"]
 
 

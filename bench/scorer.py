@@ -93,6 +93,68 @@ def _dedup(findings: list[dict]) -> list[dict]:
     return uniq
 
 
+# --- AUDIT-1: mechanical citation verification ---------------------------
+
+def _resolve_file(path: str, post_image: dict[str, str]) -> tuple[str | None, str | None]:
+    """Find the post-image file a cited path names (basename / suffix match)."""
+    for p, content in post_image.items():
+        if _same_file(path, p):
+            return p, content
+    return None, None
+
+
+def verify_findings(
+    findings: list[dict],
+    post_image: dict[str, str],
+    *,
+    line_window: int = DEFAULT_LINE_WINDOW,
+) -> dict:
+    """Citation-check findings against the materialized post-image (AUDIT-1).
+
+    The scriptable analog of SKILL.md Phase 2's mechanical check: a finding
+    survives only if its cited ``file:line`` resolves to a location that can
+    actually be opened — the file exists in the post-image AND the line is
+    within it. A hallucinated file or an out-of-range line cannot be read, so it
+    is dropped rather than counted as a (false-positive) finding.
+
+    Line resolution carries the same ``± line_window`` EOF tolerance the matcher
+    uses: a citation a few lines past the end is LLM line-drift on a real file,
+    not a hallucination, so it still resolves (this also guarantees a true
+    positive cited near the file's end is never dropped). A line-less finding
+    (``line is None``) resolves at the file level.
+
+    Returns ``{"kept": [...], "dropped": [{"finding": f, "reason": <str>}]}``;
+    reasons are ``file_unresolved`` / ``line_out_of_range``. This drops only
+    citation-unresolvable findings — never a finding that lands on a planted bug
+    — so verified-set precision is ≥ raw-set precision by construction.
+    """
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for f in findings:
+        _, content = _resolve_file(f["file"], post_image)
+        if content is None:
+            dropped.append({"finding": f, "reason": "file_unresolved"})
+            continue
+        line = f.get("line")
+        if line is not None:
+            nlines = content.count("\n")
+            if not (1 <= line <= nlines + line_window):
+                dropped.append({"finding": f, "reason": "line_out_of_range"})
+                continue
+        kept.append(f)
+    return {"kept": kept, "dropped": dropped}
+
+
+def _drop_stats(item_drops: list[list[dict]]) -> dict:
+    """Summarize per-run drops for one item: total, per-run counts, by reason."""
+    per_run = [len(d) for d in item_drops]
+    by_reason: dict[str, int] = {}
+    for d in item_drops:
+        for x in d:
+            by_reason[x["reason"]] = by_reason.get(x["reason"], 0) + 1
+    return {"total": sum(per_run), "per_run": per_run, "by_reason": by_reason}
+
+
 def score_run(
     findings: list[dict],
     bugs: list[dict],
@@ -183,19 +245,36 @@ def score_item(
     *,
     line_window: int = DEFAULT_LINE_WINDOW,
     granularity: str = "line",
+    verify: bool = False,
 ) -> dict:
-    """Score one corpus item across its K runs (``runs`` = K finding-lists)."""
+    """Score one corpus item across its K runs (``runs`` = K finding-lists).
+
+    With ``verify=True`` each run's findings are first citation-checked against
+    the item's ``post_image`` (AUDIT-1: drop findings whose ``file:line`` does
+    not resolve) and the surviving set is scored; an extra ``dropped`` summary
+    records what verification removed.
+    """
     bugs = item.get("bugs", [])
     decoys = item.get("decoys", [])
+    eff_runs = runs
+    dropped: dict | None = None
+    if verify:
+        post_image = item.get("post_image") or {}
+        verified = [verify_findings(f, post_image, line_window=line_window) for f in runs]
+        eff_runs = [v["kept"] for v in verified]
+        dropped = _drop_stats([v["dropped"] for v in verified])
     run_scores = [
         score_run(f, bugs, decoys, line_window=line_window, granularity=granularity)
-        for f in runs
+        for f in eff_runs
     ]
-    return {
+    out = {
         "id": item.get("id"),
         "run_scores": run_scores,
         "aggregate": aggregate(run_scores),
     }
+    if dropped is not None:
+        out["dropped"] = dropped
+    return out
 
 
 def score_corpus(
@@ -203,6 +282,7 @@ def score_corpus(
     *,
     line_window: int = DEFAULT_LINE_WINDOW,
     granularity: str = "line",
+    verify: bool = False,
 ) -> dict:
     """Score a whole seeded corpus.
 
@@ -211,18 +291,38 @@ def score_corpus(
     every item flattened — equal weight per run, the standard micro-average).
     ``granularity`` selects ``line`` (strict, for raw-diff) vs ``file`` (the
     fair yardstick for line-less prose input).
+
+    With ``verify=True`` (AUDIT-1) each run is citation-checked first and a
+    pooled ``corpus_dropped`` summary is added — the before/after of the
+    verification pass reads as raw ``corpus_aggregate.precision`` vs the verified
+    run's ``corpus_aggregate.precision``.
     """
     per_item = [
-        score_item(ir["item"], ir["runs"], line_window=line_window, granularity=granularity)
+        score_item(
+            ir["item"], ir["runs"],
+            line_window=line_window, granularity=granularity, verify=verify,
+        )
         for ir in items_runs
     ]
     pooled = [rs for pi in per_item for rs in pi["run_scores"]]
-    return {
+    out = {
         "granularity": granularity,
         "line_window": line_window,
         "per_item": per_item,
         "corpus_aggregate": aggregate(pooled),
     }
+    if verify:
+        per_run = [c for pi in per_item for c in pi["dropped"]["per_run"]]
+        by_reason: dict[str, int] = {}
+        for pi in per_item:
+            for reason, n in pi["dropped"]["by_reason"].items():
+                by_reason[reason] = by_reason.get(reason, 0) + n
+        out["corpus_dropped"] = {
+            "total": sum(per_run),
+            "by_reason": by_reason,
+            "n_dropped_per_run": meanstdev(per_run),
+        }
+    return out
 
 
 # --- manifest validation -------------------------------------------------

@@ -1,0 +1,14 @@
+diff --git a/owlex/retry_budget.py b/owlex/retry_budget.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/retry_budget.py
+@@ -0,0 +1,9 @@
++from owlex.backoff import compute_delay  # exponential backoff, capped in backoff.py
++
++
++def retry_delays(max_attempts: int, ceiling: float) -> list[float]:
++    # compute_delay doubles each attempt; the cap lives in owlex/backoff.py
++    delays = []
++    for attempt in range(max_attempts + 1):
++        delays.append(compute_delay(attempt, ceiling))
++    return delays

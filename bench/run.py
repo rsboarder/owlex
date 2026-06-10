@@ -261,11 +261,18 @@ def execute(args: argparse.Namespace) -> dict:
         # Score at both granularities from the SAME captured findings (pure, no
         # extra codex): `line` is the strict raw-diff metric; `file` is the fair
         # yardstick for line-less prose (AUDIT-2's apples-to-apples comparison).
+        # `verified` re-scores the citation-checked set (AUDIT-1) — the before/
+        # after reads as `line.precision` (было) vs `verified.line.precision`
+        # (стало); also a free post-process, no extra codex.
         scored = None
         if args.corpus == "seeded":
             scored = {
                 "line": scorer.score_corpus(scored_items, line_window=line_window, granularity="line"),
                 "file": scorer.score_corpus(scored_items, line_window=line_window, granularity="file"),
+                "verified": {
+                    "line": scorer.score_corpus(scored_items, line_window=line_window, granularity="line", verify=True),
+                    "file": scorer.score_corpus(scored_items, line_window=line_window, granularity="file", verify=True),
+                },
             }
         results[variant] = _variant_block(item_records, scored)
 
@@ -296,14 +303,19 @@ def compact_baseline(report: dict) -> dict:
     reviewable in git.
     """
     def _compact_scored(s: dict) -> dict:
-        return {
+        out = {
             "granularity": s.get("granularity"),
             "line_window": s["line_window"],
             "corpus_aggregate": s["corpus_aggregate"],
             "per_item": [
-                {"id": pi["id"], "aggregate": pi["aggregate"]} for pi in s["per_item"]
+                {"id": pi["id"], "aggregate": pi["aggregate"],
+                 **({"dropped": pi["dropped"]} if "dropped" in pi else {})}
+                for pi in s["per_item"]
             ],
         }
+        if "corpus_dropped" in s:  # AUDIT-1 verified block
+            out["corpus_dropped"] = s["corpus_dropped"]
+        return out
 
     out = {k: v for k, v in report.items() if k != "results"}
     out["results"] = {}
@@ -311,7 +323,13 @@ def compact_baseline(report: dict) -> dict:
         compact = {"cost": block["cost"]}
         scored = block.get("scored")
         if scored is not None:
-            compact["scored"] = {g: _compact_scored(s) for g, s in scored.items()}
+            # `line`/`file` are score_corpus dicts; `verified` nests one level
+            # ({"line": ..., "file": ...}) — compact each leaf the same way.
+            compact["scored"] = {
+                g: (_compact_scored(s) if "corpus_aggregate" in s
+                    else {gg: _compact_scored(ss) for gg, ss in s.items()})
+                for g, s in scored.items()
+            }
         out["results"][variant] = compact
     return out
 

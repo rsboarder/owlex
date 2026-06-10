@@ -166,6 +166,22 @@
         }
       ],
       "decoys": []
+    },
+    {
+      "id": "seed-09-bait-hallucination",
+      "file": "owlex/retry_budget.py",
+      "diff_path": "diffs/seed-09-bait-hallucination.diff",
+      "prose_summary": "Adds `retry_delays()` in `owlex/retry_budget.py`, which builds the list of backoff delays for a retry loop by calling `compute_delay()` (imported from `owlex/backoff.py`) for each attempt up to the configured maximum.",
+      "bugs": [
+        {
+          "bug_type": "boundary",
+          "file": "owlex/retry_budget.py",
+          "line": 7,
+          "description": "range(max_attempts + 1) schedules one extra retry beyond max_attempts (off-by-one); should be range(max_attempts). The genuine in-file bug — its citation resolves and survives AUDIT-1 verification."
+        }
+      ],
+      "decoys": [],
+      "bait": "Calls compute_delay() imported from owlex/backoff.py — a module deliberately NOT part of this corpus item, so it is absent from the materialized post-image. The code + comments invite a reviewer to reason about the (unseen) backoff cap and cite owlex/backoff.py:<n>; that citation cannot be opened against the post-image, so AUDIT-1 verification drops it. This is the hallucination magnet that gives the verify pass something to drop — it is intentionally NOT a labeled bug/decoy."
     }
   ]
 }
