@@ -1,0 +1,26 @@
+diff --git a/owlex/probe.py b/owlex/probe.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/probe.py
+@@ -0,0 +1,14 @@
++import asyncio
++
++
++async def run_probe(cmd: list[str], timeout: int) -> tuple[bool, str]:
++    proc = await asyncio.create_subprocess_exec(
++        *cmd,
++        stdout=asyncio.subprocess.PIPE,
++        stderr=asyncio.subprocess.PIPE,
++    )
++    try:
++        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
++    except asyncio.TimeoutError:
++        return False, "probe timed out"
++    return True, out.decode("utf-8", errors="replace")
+diff --git a/owlex/probe_io.py b/owlex/probe_io.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/probe_io.py
+@@ -0,0 +1,2 @@
++def decode_stream(raw: bytes) -> str:
++    return raw.decode("utf-8", errors="replace")

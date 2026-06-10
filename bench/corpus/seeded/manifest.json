@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "description": "Seeded corpus for AUDIT-0: synthetic diffs with known injected bugs (ground truth for precision/recall) plus decoys (plausible-but-not-a-bug, for precision). One planted issue per file so the line-tolerance matcher never has ambiguous attribution. Each item carries both a raw diff (diff_path) and a prose_summary (the editorialized 'было' input variant for AUDIT-2's prose-vs-raw comparison). bug 'line' = the new-file line number of the offending line within that file.",
+  "line_window_default": 3,
+  "items": [
+    {
+      "id": "seed-01-subprocess-leak",
+      "file": "owlex/probe.py",
+      "diff_path": "diffs/seed-01-subprocess-leak.diff",
+      "prose_summary": "Adds `run_probe()` in `owlex/probe.py`, which launches a subprocess via asyncio and awaits its output under a timeout before returning the decoded stdout; and `decode_stream()` in `owlex/probe_io.py`, which decodes raw bytes to a UTF-8 string.",
+      "bugs": [
+        {
+          "bug_type": "resource_leak",
+          "file": "owlex/probe.py",
+          "line": 13,
+          "description": "The asyncio.TimeoutError branch returns without proc.kill()+await proc.wait(); the timed-out child is orphaned (the exact reap-on-timeout failure mode hardened in second_opinion._terminate)."
+        }
+      ],
+      "decoys": [
+        {
+          "file": "owlex/probe_io.py",
+          "line": 2,
+          "description": "decode(..., errors='replace') looks like silent error-hiding but is the intentional owlex decode pattern — behavior-safe, not a bug."
+        }
+      ]
+    },
+    {
+      "id": "seed-02-env-parse",
+      "file": "owlex/config_timeout.py",
+      "diff_path": "diffs/seed-02-env-parse.diff",
+      "prose_summary": "Adds two env-config readers: `load_timeout()` in `owlex/config_timeout.py` reads `OWLEX_PROBE_TIMEOUT` and returns it as an int; `strict_enabled()` in `owlex/config_flag.py` reads `OWLEX_STRICT` and returns whether strict mode is enabled.",
+      "bugs": [
+        {
+          "bug_type": "wrong_default",
+          "file": "owlex/config_timeout.py",
+          "line": 6,
+          "description": "os.getenv returns None when the var is unset; int(None) raises TypeError. Missing default — the documented 'pin via env with a default' pattern is violated."
+        },
+        {
+          "bug_type": "error_swallow",
+          "file": "owlex/config_flag.py",
+          "line": 8,
+          "description": "Bare 'except Exception: return True' turns any failure (missing var KeyError) into strict-mode-ON, silently masking the misconfiguration instead of surfacing it."
+        }
+      ],
+      "decoys": []
+    },
+    {
+      "id": "seed-03-derivation-write",
+      "file": "owlex/derivations_writer.py",
+      "diff_path": "diffs/seed-03-derivation-write.diff",
+      "prose_summary": "Adds `record()` in `owlex/derivations_writer.py`, which looks up a session row by id and returns its id; and `emit_pairwise()` in `owlex/pairwise_sink.py`, which schedules a pairwise analytics write for a payload.",
+      "bugs": [
+        {
+          "bug_type": "none_deref",
+          "file": "owlex/derivations_writer.py",
+          "line": 3,
+          "description": "find_session can return None on a miss; row.id then raises AttributeError. No None guard."
+        },
+        {
+          "bug_type": "race_condition",
+          "file": "owlex/pairwise_sink.py",
+          "line": 5,
+          "description": "asyncio.create_task() for a DB write inside request scope — cancelled when the request-scoped loop tears down (the documented owlex anti-pattern; must go through derivations.emit())."
+        }
+      ],
+      "decoys": []
+    },
+    {
+      "id": "seed-04-jsonl-parse",
+      "file": "owlex/jsonl_tail.py",
+      "diff_path": "diffs/seed-04-jsonl-parse.diff",
+      "prose_summary": "Adds `last_n()` in `owlex/jsonl_tail.py`, which returns the final n items of a list; and `coerce_count()` in `owlex/jsonl_guard.py`, which normalizes a count argument to a non-negative int.",
+      "bugs": [
+        {
+          "bug_type": "boundary",
+          "file": "owlex/jsonl_tail.py",
+          "line": 2,
+          "description": "items[len(items) - n:] goes negative when n > len(items), wrapping the slice and returning the wrong tail; should be items[-n:] or a guarded max(0, ...)."
+        }
+      ],
+      "decoys": [
+        {
+          "file": "owlex/jsonl_guard.py",
+          "line": 2,
+          "description": "n = int(n) is a redundant cast on an already-int parameter — defensive-but-pointless, behavior-neutral; not a bug."
+        }
+      ]
+    },
+    {
+      "id": "seed-05-anonymize",
+      "file": "owlex/anonymize_map.py",
+      "diff_path": "diffs/seed-05-anonymize.diff",
+      "prose_summary": "Adds `assign()` in `owlex/anonymize_map.py`, which maps a list of names onto anonymized labels; and `store_value()` in `owlex/anonymize_sink.py`, which rounds a numeric value and stores it under a key.",
+      "bugs": [
+        {
+          "bug_type": "boundary",
+          "file": "owlex/anonymize_map.py",
+          "line": 7,
+          "description": "LABELS[i] raises IndexError once len(names) exceeds len(LABELS)=6; no modulo/extension. Council seats can exceed 6."
+        },
+        {
+          "bug_type": "error_swallow",
+          "file": "owlex/anonymize_sink.py",
+          "line": 5,
+          "description": "Bare 'except Exception' silently stores a non-numeric value when round() TypeErrors, hiding bad input rather than failing closed."
+        }
+      ],
+      "decoys": []
+    },
+    {
+      "id": "seed-06-heartbeat",
+      "file": "owlex/heartbeat.py",
+      "diff_path": "diffs/seed-06-heartbeat.diff",
+      "prose_summary": "Adds `elapsed_since()` in `owlex/heartbeat.py`, which computes how long since a task's last output; `is_stalled()` in `owlex/heartbeat_check.py`, which decides whether a task is stalled from an elapsed time and a limit; and `is_anonymous()` in `owlex/heartbeat_label.py`, which checks whether a name is anonymous.",
+      "bugs": [
+        {
+          "bug_type": "none_deref",
+          "file": "owlex/heartbeat.py",
+          "line": 3,
+          "description": "task.get('last_output_monotonic') is None when the key is absent; 'now - last' then raises TypeError. No default/guard."
+        },
+        {
+          "bug_type": "boundary",
+          "file": "owlex/heartbeat_check.py",
+          "line": 2,
+          "description": "Comparison is flipped: a task is stalled when MORE than 'limit' has elapsed, so this must be 'elapsed > limit', not 'elapsed < limit'."
+        }
+      ],
+      "decoys": [
+        {
+          "file": "owlex/heartbeat_label.py",
+          "line": 2,
+          "description": "'name == None' is a style smell (should be 'is None') but behavior-identical — not a bug."
+        }
+      ]
+    },
+    {
+      "id": "seed-07-large-council-config",
+      "file": "owlex/council_config.py",
+      "diff_path": "diffs/seed-07-large-council-config.diff",
+      "post_image_dir": "post_image/seed-07-large-council-config",
+      "prose_summary": "Extends `owlex/council_config.py` with a quorum/majority policy — adds a `quorum()` helper and an `is_majority()` check — alongside the existing seat-model, reasoning, label, retry, and timeout helpers in that module.",
+      "bugs": [
+        {
+          "bug_type": "boundary",
+          "file": "owlex/council_config.py",
+          "line": 50,
+          "description": "quorum() returns n_seats // 2; a strict majority of n needs floor(n/2)+1, so is_majority() counts a tied half-vote (e.g. 3 of 6) as a majority. A buried off-by-one in a large file — the AUDIT-2 large-diff probe."
+        }
+      ],
+      "decoys": []
+    },
+    {
+      "id": "seed-08-large-rating-stats",
+      "file": "owlex/rating_stats.py",
+      "diff_path": "diffs/seed-08-large-rating-stats.diff",
+      "post_image_dir": "post_image/seed-08-large-rating-stats",
+      "prose_summary": "Reworks the quantile index computation in `owlex/rating_stats.py` and extends the rating aggregation — adds a `spread()` helper and a `p100` field to `aggregate_seat()` — in that stats module.",
+      "bugs": [
+        {
+          "bug_type": "boundary",
+          "file": "owlex/rating_stats.py",
+          "line": 63,
+          "description": "quantile() drops the `min(..., len-1)` clamp on idx; at q=1.0 (now exercised by the new p100 stat) idx == len(ordered) → IndexError. A subtle one-line guard removal buried in a large file — the AUDIT-2 subtle-large-diff probe."
+        }
+      ],
+      "decoys": []
+    }
+  ]
+}

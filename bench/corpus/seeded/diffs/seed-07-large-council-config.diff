@@ -1,0 +1,16 @@
+diff --git a/owlex/council_config.py b/owlex/council_config.py
+index b1e045a..597b4b0 100644
+--- a/owlex/council_config.py
++++ b/owlex/council_config.py
+@@ -44,3 +44,11 @@ def retry_delays(attempts: int, base: float) -> list[float]:
+ def pick_timeout(seat: str) -> int:
+     raw = _env(f"OWLEX_{seat.upper()}_TIMEOUT", str(DEFAULT_TIMEOUT))
+     return int(raw)
++
++
++def quorum(n_seats: int) -> int:
++    return n_seats // 2
++
++
++def is_majority(votes: int, n_seats: int) -> bool:
++    return votes >= quorum(n_seats)

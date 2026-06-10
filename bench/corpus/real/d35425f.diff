@@ -1,0 +1,66 @@
+commit d35425f42fb834da33ccc851cb91dc83d7daf018
+Author: Konstantin <rsboarder@gmail.com>
+Date:   Tue Jun 2 20:02:42 2026 +0400
+
+    fix: point cursor seat at cursor-agent binary, not PATH-hijacked agent (#2)
+    
+    The cursor runner invoked the bare binary name `agent`. During Grok seat
+    testing, the Grok CLI installed ~/.grok/bin/agent earlier on PATH, so
+    shutil.which("agent") and the subprocess both resolved to Grok, not Cursor.
+    Every council since May 28 silently lost the cursor seat — and claudeor,
+    which fell back onto the same binary — with:
+    
+        error: a value is required for '--single <PROMPT>' but none was supplied
+    
+    (`--single` is Grok's headless flag; Cursor uses `--print`.)
+    
+    Point all three references at the unambiguous `cursor-agent` binary:
+    the cli_command availability check, both exec/resume argv, and the
+    dashboard CLI-version probe.
+    
+    Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/owlex/agents/cursor.py b/owlex/agents/cursor.py
+index 7689545..715da40 100644
+--- a/owlex/agents/cursor.py
++++ b/owlex/agents/cursor.py
+@@ -78,7 +78,7 @@ class CursorRunner(AgentRunner):
+ 
+     @property
+     def cli_command(self) -> str:
+-        return "agent"
++        return "cursor-agent"
+ 
+     @property
+     def output_prefix(self) -> str:
+@@ -93,7 +93,7 @@ class CursorRunner(AgentRunner):
+         **kwargs,
+     ) -> AgentCommand:
+         """Build command for starting a new Cursor Agent session."""
+-        full_command = ["agent", "--print", "--output-format", "text", "--trust"]
++        full_command = ["cursor-agent", "--print", "--output-format", "text", "--trust"]
+ 
+         # Model selection: explicit override > config > default
+         model = model_override or config.cursor.model
+@@ -131,7 +131,7 @@ class CursorRunner(AgentRunner):
+         **kwargs,
+     ) -> AgentCommand:
+         """Build command for resuming an existing Cursor Agent session."""
+-        full_command = ["agent", "--print", "--output-format", "text", "--trust"]
++        full_command = ["cursor-agent", "--print", "--output-format", "text", "--trust"]
+ 
+         # Model selection: explicit override > config > default
+         model = model_override or config.cursor.model
+diff --git a/owlex/server/_resources.py b/owlex/server/_resources.py
+index 4e7b8f0..34cc000 100644
+--- a/owlex/server/_resources.py
++++ b/owlex/server/_resources.py
+@@ -24,7 +24,7 @@ async def get_agents() -> str:
+         get_cli_version("gemini"),
+         get_cli_version("opencode"),
+         get_cli_version("aichat"),
+-        get_cli_version("agent"),
++        get_cli_version("cursor-agent"),
+     )
+ 
+     agents = {

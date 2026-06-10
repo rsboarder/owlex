@@ -1,0 +1,1176 @@
+{
+  "target": "cross_model",
+  "corpus": "seeded",
+  "runs": 5,
+  "line_window": 3,
+  "input_variants": [
+    "raw_diff",
+    "prose"
+  ],
+  "generated_with": {
+    "dry": false,
+    "timeout": 120,
+    "concurrency": 5,
+    "file_access": "materialized-repo",
+    "model": "gpt-5.5",
+    "reasoning": "high"
+  },
+  "results": {
+    "raw_diff": {
+      "cost": {
+        "wall_time_s": {
+          "mean": 20.52635,
+          "stdev": 9.446748355373058,
+          "n": 40
+        },
+        "reviewer_count": 1,
+        "tokens": null,
+        "tokens_note": "not captured \u2014 get_second_opinion returns no token counts (plan Open Q2)"
+      },
+      "scored": {
+        "line": {
+          "granularity": "line",
+          "line_window": 3,
+          "corpus_aggregate": {
+            "runs": 40,
+            "precision": {
+              "mean": 0.8803418803418804,
+              "stdev": 0.1900243057272714,
+              "n": 39
+            },
+            "recall": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "detection_rate": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "decoy_hits": {
+              "mean": 0.175,
+              "stdev": 0.3848076442547927,
+              "n": 40
+            },
+            "n_findings": {
+              "mean": 2.125,
+              "stdev": 0.9111137169026735,
+              "n": 40
+            }
+          },
+          "per_item": [
+            {
+              "id": "seed-01-subprocess-leak",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.8333333333333334,
+                  "stdev": 0.1559023911155809,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 3.2,
+                  "stdev": 0.8366600265340756,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-02-env-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.4,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-03-derivation-write",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-04-jsonl-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 4
+                },
+                "recall": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-05-anonymize",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-06-heartbeat",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.7333333333333333,
+                  "stdev": 0.14907119849998599,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-07-large-council-config",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.6,
+                  "stdev": 0.22360679774997896,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-08-large-rating-stats",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.9,
+                  "stdev": 0.22360679774997896,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.2,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            }
+          ]
+        },
+        "file": {
+          "granularity": "file",
+          "line_window": 3,
+          "corpus_aggregate": {
+            "runs": 40,
+            "precision": {
+              "mean": 0.9444444444444445,
+              "stdev": 0.1214154660642957,
+              "n": 39
+            },
+            "recall": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "detection_rate": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "decoy_hits": {
+              "mean": 0.175,
+              "stdev": 0.3848076442547927,
+              "n": 40
+            },
+            "n_findings": {
+              "mean": 2.125,
+              "stdev": 0.9111137169026735,
+              "n": 40
+            }
+          },
+          "per_item": [
+            {
+              "id": "seed-01-subprocess-leak",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.8333333333333334,
+                  "stdev": 0.1559023911155809,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 3.2,
+                  "stdev": 0.8366600265340756,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-02-env-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.4,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-03-derivation-write",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-04-jsonl-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 4
+                },
+                "recall": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-05-anonymize",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-06-heartbeat",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.7333333333333333,
+                  "stdev": 0.14907119849998599,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-07-large-council-config",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-08-large-rating-stats",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.2,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "prose": {
+      "cost": {
+        "wall_time_s": {
+          "mean": 43.307249999999996,
+          "stdev": 10.358955354593508,
+          "n": 40
+        },
+        "reviewer_count": 1,
+        "tokens": null,
+        "tokens_note": "not captured \u2014 get_second_opinion returns no token counts (plan Open Q2)"
+      },
+      "scored": {
+        "line": {
+          "granularity": "line",
+          "line_window": 3,
+          "corpus_aggregate": {
+            "runs": 40,
+            "precision": {
+              "mean": 0.8572649572649572,
+              "stdev": 0.25095708236665387,
+              "n": 39
+            },
+            "recall": {
+              "mean": 0.95,
+              "stdev": 0.22072142786315224,
+              "n": 40
+            },
+            "detection_rate": {
+              "mean": 0.95,
+              "stdev": 0.22072142786315224,
+              "n": 40
+            },
+            "decoy_hits": {
+              "mean": 0.1,
+              "stdev": 0.3038218101251,
+              "n": 40
+            },
+            "n_findings": {
+              "mean": 2.075,
+              "stdev": 0.888314451139102,
+              "n": 40
+            }
+          },
+          "per_item": [
+            {
+              "id": "seed-01-subprocess-leak",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.9199999999999999,
+                  "stdev": 0.17888543819998318,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.2,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 3.2,
+                  "stdev": 1.0954451150103321,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-02-env-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-03-derivation-write",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-04-jsonl-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 4
+                },
+                "recall": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-05-anonymize",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-06-heartbeat",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.8,
+                  "stdev": 0.18257418583505539,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-07-large-council-config",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.6,
+                  "stdev": 0.22360679774997896,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-08-large-rating-stats",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.5666666666666667,
+                  "stdev": 0.4346134936801766,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.6,
+                  "stdev": 0.8944271909999159,
+                  "n": 5
+                }
+              }
+            }
+          ]
+        },
+        "file": {
+          "granularity": "file",
+          "line_window": 3,
+          "corpus_aggregate": {
+            "runs": 40,
+            "precision": {
+              "mean": 0.9692307692307691,
+              "stdev": 0.09408985856339902,
+              "n": 39
+            },
+            "recall": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "detection_rate": {
+              "mean": 0.975,
+              "stdev": 0.15811388300841897,
+              "n": 40
+            },
+            "decoy_hits": {
+              "mean": 0.1,
+              "stdev": 0.3038218101251,
+              "n": 40
+            },
+            "n_findings": {
+              "mean": 2.075,
+              "stdev": 0.888314451139102,
+              "n": 40
+            }
+          },
+          "per_item": [
+            {
+              "id": "seed-01-subprocess-leak",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.96,
+                  "stdev": 0.08944271909999157,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.2,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 3.2,
+                  "stdev": 1.0954451150103321,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-02-env-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-03-derivation-write",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-04-jsonl-parse",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 4
+                },
+                "recall": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 0.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-05-anonymize",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.0,
+                  "stdev": 0.0,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-06-heartbeat",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 0.8,
+                  "stdev": 0.18257418583505539,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 2.6,
+                  "stdev": 0.5477225575051661,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-07-large-council-config",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.8,
+                  "stdev": 0.4472135954999579,
+                  "n": 5
+                }
+              }
+            },
+            {
+              "id": "seed-08-large-rating-stats",
+              "aggregate": {
+                "runs": 5,
+                "precision": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "recall": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "detection_rate": {
+                  "mean": 1.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "decoy_hits": {
+                  "mean": 0.0,
+                  "stdev": 0.0,
+                  "n": 5
+                },
+                "n_findings": {
+                  "mean": 1.6,
+                  "stdev": 0.8944271909999159,
+                  "n": 5
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

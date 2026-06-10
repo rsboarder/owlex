@@ -1,0 +1,15 @@
+diff --git a/owlex/jsonl_tail.py b/owlex/jsonl_tail.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/jsonl_tail.py
+@@ -0,0 +1,2 @@
++def last_n(items: list[str], n: int) -> list[str]:
++    return items[len(items) - n:]
+diff --git a/owlex/jsonl_guard.py b/owlex/jsonl_guard.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/jsonl_guard.py
+@@ -0,0 +1,3 @@
++def coerce_count(n: int) -> int:
++    n = int(n)
++    return max(n, 0)

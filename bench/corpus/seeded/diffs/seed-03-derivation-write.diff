@@ -1,0 +1,18 @@
+diff --git a/owlex/derivations_writer.py b/owlex/derivations_writer.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/derivations_writer.py
+@@ -0,0 +1,3 @@
++def record(store, event: dict) -> str:
++    row = store.find_session(event["session_id"])
++    return row.id
+diff --git a/owlex/pairwise_sink.py b/owlex/pairwise_sink.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/pairwise_sink.py
+@@ -0,0 +1,5 @@
++import asyncio
++
++
++def emit_pairwise(store, payload: dict) -> None:
++    asyncio.create_task(store.write_pairwise(payload))

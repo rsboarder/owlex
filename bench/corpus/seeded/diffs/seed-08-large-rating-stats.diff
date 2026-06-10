@@ -1,0 +1,13 @@
+diff --git a/owlex/rating_stats.py b/owlex/rating_stats.py
+index 05412f8..a6b4dac 100644
+--- a/owlex/rating_stats.py
++++ b/owlex/rating_stats.py
+@@ -60,7 +60,7 @@ def quantile(values: list[float], q: float) -> float:
+     if not values:
+         return 0.0
+     ordered = sorted(values)
+-    idx = min(int(len(ordered) * q), len(ordered) - 1)
++    idx = int(len(ordered) * q)
+     return ordered[idx]
+ 
+ 

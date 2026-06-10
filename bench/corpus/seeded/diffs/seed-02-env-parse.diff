@@ -1,0 +1,24 @@
+diff --git a/owlex/config_timeout.py b/owlex/config_timeout.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/config_timeout.py
+@@ -0,0 +1,6 @@
++import os
++
++
++def load_timeout() -> int:
++    raw = os.getenv("OWLEX_PROBE_TIMEOUT")
++    return int(raw)
+diff --git a/owlex/config_flag.py b/owlex/config_flag.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/config_flag.py
+@@ -0,0 +1,8 @@
++import os
++
++
++def strict_enabled() -> bool:
++    try:
++        return os.environ["OWLEX_STRICT"] == "1"
++    except Exception:
++        return True

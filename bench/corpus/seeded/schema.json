@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AUDIT-0 seeded corpus manifest",
+  "description": "Ground-truth-labeled synthetic diffs. Enforced programmatically by bench.scorer.validate_manifest (kept dependency-free — this file is the human-readable contract; the validator is the executable one).",
+  "type": "object",
+  "required": ["items"],
+  "properties": {
+    "schema_version": {"type": "integer"},
+    "description": {"type": "string"},
+    "line_window_default": {"type": "integer", "minimum": 0},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "file", "diff_path", "prose_summary", "bugs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "file": {"type": "string", "minLength": 1},
+          "diff_path": {"type": "string", "minLength": 1},
+          "prose_summary": {"type": "string", "minLength": 1},
+          "bugs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["bug_type", "file", "line", "description"],
+              "properties": {
+                "bug_type": {"type": "string", "minLength": 1},
+                "file": {"type": "string", "minLength": 1},
+                "line": {"type": "integer", "minimum": 1},
+                "description": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "decoys": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file", "line", "description"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "line": {"type": "integer", "minimum": 1},
+                "description": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-corpus-invariants": {
+    "min_bugs": 10,
+    "min_bug_types": 3,
+    "min_decoys": 2,
+    "note": "Enforced by bench.scorer.validate_manifest, not by this JSON Schema."
+  }
+}

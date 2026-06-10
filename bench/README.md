@@ -1,0 +1,157 @@
+# `bench/` — AUDIT-0 benchmark harness for `solution-audit`
+
+Measures **detection quality** (precision / recall / detection-rate) and **cost**
+(wall-time / reviewer-count) of the cross-model `second_opinion` reviewer against
+a ground-truth-labeled corpus, with **K runs + mean ± stdev** (the audit is
+non-deterministic — a single before/after run is not a benchmark).
+
+This is **AUDIT-0**, the dependency that unblocks AUDIT-1/2/3/4/6 — every
+downstream ticket's было/стало runs through here. Full plan:
+[`docs/plans/owlex-audit-hardening.md`](../docs/plans/owlex-audit-hardening.md).
+
+## Scope
+
+The harness targets the **`cross_model`** step only — a direct call to
+`owlex.second_opinion.get_second_opinion()`, a plain coroutine a script can
+invoke. The 5 Opus dimension judges and `council_ask` run as **Claude Code Agent
+spawns**, which a standalone Python script **cannot** drive (plan Open Q1). A
+`TARGETS` registry seam is left in [`run.py`](run.py) for `panel` / `council`
+targets; they are intentionally absent so `--target panel` fails loudly rather
+than silently mis-measuring.
+
+## Layout
+
+```
+bench/
+  run.py                       # runner + CLI (the only live-codex entry point)
+  scorer.py                    # pure scoring: precision/recall, matching, manifest validation
+  corpus.py                    # pure corpus loading + unified-diff parsing
+  corpus/
+    seeded/
+      manifest.json            # labeled ground truth (bugs + decoys)
+      schema.json              # human-readable contract (validator is scorer.validate_manifest)
+      diffs/seed-*.diff        # the synthetic diffs (one planted issue per file)
+    real/<sha>.diff            # real owlex git-history diffs, unlabeled (cost/realism)
+  baselines/cross_model.json   # committed было snapshot (compact metrics)
+  tests/                       # pure, deterministic — never calls codex
+```
+
+## Running
+
+```bash
+python bench/run.py --help
+
+# plumbing smoke — no codex, deterministic (CI-safe):
+python bench/run.py --corpus seeded --runs 1 --dry
+
+# real benchmark (calls codex K times per item per variant — costs time/tokens):
+python bench/run.py --corpus seeded --target cross_model --runs 5
+
+# cost/realism on real diffs (unlabeled — cost only, no scoring):
+python bench/run.py --corpus real --runs 3
+
+# capture/refresh the committed было baseline:
+python bench/run.py --corpus seeded --runs 5 --baseline
+```
+
+Flags: `--input-variant {raw_diff,prose,both}` (seeded; default `both`),
+`--line-window N` (match tolerance; default 3), `--timeout`, `--out PATH`,
+`--manifest`, `--real-dir`.
+
+## Metrics
+
+A **finding** is a `path:line` citation parsed from the reviewer's prose. It
+**matches** a labeled bug/decoy when the file matches (basename / path-suffix)
+**and** the line is within `± line_window` (default 3) — LLM citations drift a
+few lines, so exact-match would read recall ≈ 0.
+
+- **recall** = labeled bugs matched / total bugs (the detection metric AUDIT-2 moves).
+- **precision** = true-positive findings / total findings (`null` when the
+  reviewer produced nothing — undefined, not zero). The metric AUDIT-1 moves.
+- **detection_rate** = fraction of items with ≥1 bug caught (AUDIT-3 quality-guard).
+- **decoy_hits** = findings landing on a planted decoy (attributable false positives).
+- **cost** = wall-time mean ± stdev + reviewer-count. **Tokens are not captured**
+  — `get_second_opinion` returns no token counts and extracting them would
+  re-plumb the feature under audit (plan Open Q2).
+
+Each seeded diff is **clean except for its planted bugs + decoys**, so any
+finding matching neither is a hallucination (also a false positive). Aggregates
+are micro-averaged (every run of every item pooled with equal weight).
+
+## Adding a corpus item
+
+**Seeded (labeled):**
+1. Drop a unified diff at `corpus/seeded/diffs/<id>.diff`. **Put one planted
+   issue per file** — different basenames never collide under the line-tolerance
+   matcher, so attribution stays unambiguous (no line-spacing math).
+2. Add an item to `manifest.json`: `id`, `file`, `diff_path`, `prose_summary`
+   (an editorialized, line-anchor-free description — the "было" input variant),
+   `bugs[{bug_type,file,line,description}]`, optional `decoys[{file,line,description}]`.
+   `line` = the **new-file line number** of the offending added line.
+3. `python -m pytest bench/` — `test_corpus.py` verifies every labeled line
+   resolves to a real added line and the contract holds (≥10 bugs / ≥3 types /
+   ≥2 decoys).
+
+**Real (unlabeled):** `git show <sha> > bench/corpus/real/<sha>.diff`. No labels —
+used for cost/realism only.
+
+## Before/after comparison (the downstream pattern)
+
+Each downstream ticket compares two configurations on the **same** corpus and
+reports the metric delta as mean ± stdev over K runs. Example — **AUDIT-2**
+(prose summary vs raw diff):
+
+```bash
+python bench/run.py --corpus seeded --runs 5 --input-variant both --out /tmp/audit2.json
+# compare results.prose.scored vs results.raw_diff.scored — recall mean ± stdev.
+# success: raw-diff recall ≥ prose recall, no per-type regression.
+```
+
+The `both` variant runs both inputs in one pass so the comparison is paired.
+
+## Baseline
+
+[`baselines/cross_model.json`](baselines/cross_model.json) is a **compact** metrics
+snapshot (aggregates + cost, no raw records) so it stays diffable in git.
+
+**Captured 2026-06-10** (gpt-5.5 / reasoning=high, K=5, 8 items, 80/80 ok, `file_access=materialized-repo`):
+
+| variant | line-recall | file-recall | precision | wall/call |
+|---------|-------------|-------------|-----------|-----------|
+| `raw_diff` | 0.97 ± 0.16 | 0.97 ± 0.16 | 0.88 ± 0.19 | 20.5s |
+| `prose`    | 0.95 ± 0.22 | 0.97 ± 0.16 | 0.86 ± 0.25 | 43.3s |
+
+Refresh with `python bench/run.py --corpus seeded --runs 5 --baseline`
+(`--concurrency 5` ≈ 7 min; ~80 codex calls).
+
+> **The honest result does NOT support AUDIT-2's recall premise — it's a cost win.**
+> With repo access (faithful to production — both variants get the materialized files
+> via `_materialize`), `prose` and `raw_diff` detect **equally** (line-recall 0.95 vs
+> 0.97; file-recall 0.97 vs 0.97). The earlier dramatic `0.00 → 0.87` was **entirely
+> an empty-sandbox artifact**: given only prose and no readable files, codex refuses to
+> review and demands the diff. Once it can read the files, prose loses almost nothing.
+>
+> What AUDIT-2 **does** win, measured here:
+> - **Cost**: `raw_diff` is ~2.1× faster (20.5s vs 43.3s) — with only prose, codex
+>   hunts through the repo instead of reading focused hunks. The robust, consistent win.
+> - **Bias** (AUDIT-2's other argument) is orthogonal to recall — this benchmark does
+>   not measure whose framing shapes the review.
+>
+> **The one regime where raw edges prose on recall**: `seed-08` (a subtle one-line
+> guard removal buried in a 94-line file) is the *only* item where raw beats prose at
+> line-precision (1.00 vs 0.80) — the raw hunk screams "removed a bound" while prose
+> makes codex re-derive it. But that's 1 of 8 items, within stdev. `seed-07` (a larger
+> but recognizable new block) is parity. So even on large diffs the recall gap is
+> marginal; **AUDIT-2 ships justified on cost, not recall** (recorded as fact).
+>
+> Other reads: `seed-04-jsonl-parse` (negative-slice boundary) is the hard item —
+> recall ~0.80 both variants. Precision ~0.9 is mildly inflated: the ±3 line window
+> absorbs unlabeled-but-real nearby findings as TPs, leaving AUDIT-1 (verification)
+> real headroom.
+
+## Self-test
+
+```bash
+python -m pytest bench/ -q     # pure scorer/corpus/runner — fast, no codex
+python -m pytest tests/  -q     # the main suite is unaffected (testpaths=["tests"])
+```

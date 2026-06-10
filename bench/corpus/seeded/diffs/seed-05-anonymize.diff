@@ -1,0 +1,23 @@
+diff --git a/owlex/anonymize_map.py b/owlex/anonymize_map.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/anonymize_map.py
+@@ -0,0 +1,8 @@
++LABELS = ["A", "B", "C", "D", "E", "F"]
++
++
++def assign(names: list[str]) -> dict:
++    mapping = {}
++    for i, name in enumerate(names):
++        mapping[name] = LABELS[i]
++    return mapping
+diff --git a/owlex/anonymize_sink.py b/owlex/anonymize_sink.py
+new file mode 100644
+--- /dev/null
++++ b/owlex/anonymize_sink.py
+@@ -0,0 +1,5 @@
++def store_value(out: dict, key: str, value) -> None:
++    try:
++        out[key] = round(value, 4)
++    except Exception:
++        out[key] = value
