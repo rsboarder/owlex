@@ -1,5 +1,7 @@
 # AUDIT-0: Benchmark Harness + Corpus — Handover (2026-06-09)
 
+**Backlog:** `TASK-1` (AUDIT-0, **Done**) — tracked in the local Backlog.md project (label `audit-hardening`).
+
 ## Goal
 Build the `bench/` harness + seeded&real corpus + scorer + committed baselines for `solution-audit`. This is **step 1** of the Owlex audit-hardening plan and the **dependency that unblocks AUDIT-1/2/3/4/5/6** — every downstream ticket's BEFORE/AFTER benchmark runs through this harness.
 

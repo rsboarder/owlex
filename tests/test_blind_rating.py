@@ -1,14 +1,23 @@
-"""Blind per-agent rating: anonymization persistence + agent_scores writer."""
+"""Blind per-agent rating: anonymization persistence + agent_scores writer.
+
+Also covers the blind-rating invariant: council_ask must not surface anything
+that lets a reader map the lettered responses back to specific agent seats —
+neither seat-identifying metadata (timing, slowest_agent, log) nor a per-response
+join key (duration_seconds, which pairs with agent_timing(council_id); task_id).
+"""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from owlex import store
-from owlex.models import AgentResponse, CouncilRound
+from owlex.models import AgentResponse, AgentTiming, CouncilMetadata, CouncilRound
 from owlex.prompts import anonymize_round_responses
+from owlex.server._council import (
+    _anonymize_response_for_rating,
+    _sanitize_metadata_for_rating,
+)
 
 
 @pytest.fixture
@@ -126,3 +135,80 @@ class TestRecordAgentScore:
             "SELECT dimensions FROM agent_scores WHERE council_id='C4'"
         ).fetchone()["dimensions"]
         assert dims is None
+
+
+# === Blind-Rating Invariant: metadata sanitization ===
+
+# All known seat names — none of these may appear in the sanitized rater-facing payload.
+_ALL_SEATS = {"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"}
+
+
+def _make_leaky_metadata() -> CouncilMetadata:
+    """Build a CouncilMetadata that would expose seat identity in all three leaking fields."""
+    return CouncilMetadata(
+        total_duration_seconds=45.0,
+        rounds=1,
+        timing=[
+            AgentTiming(agent="codex", round=1, duration_seconds=30.0, status="completed"),
+            AgentTiming(agent="gemini", round=1, duration_seconds=45.0, status="completed"),
+        ],
+        slowest_agent="gemini",
+        log=[
+            "Round 1: querying codex, gemini, opencode",
+            "Roles assigned: codex=security",
+        ],
+    )
+
+
+class TestSanitizeMetadataForRating:
+    def test_drops_identifying_keys(self):
+        sanitized = _sanitize_metadata_for_rating(_make_leaky_metadata())
+        assert "timing" not in sanitized, "timing must be stripped for blind rater"
+        assert "slowest_agent" not in sanitized, "slowest_agent must be stripped for blind rater"
+        assert "log" not in sanitized, "log must be stripped for blind rater"
+
+    def test_retains_non_identifying_scalars(self):
+        sanitized = _sanitize_metadata_for_rating(_make_leaky_metadata())
+        assert sanitized["total_duration_seconds"] == 45.0
+        assert sanitized["rounds"] == 1
+
+    def test_no_seat_name_leaks_in_serialized_payload(self):
+        sanitized = _sanitize_metadata_for_rating(_make_leaky_metadata())
+        serialized = json.dumps(sanitized)
+        for seat in _ALL_SEATS:
+            assert seat not in serialized, (
+                f"Seat name '{seat}' found in sanitized metadata — "
+                "blind-rating invariant violated"
+            )
+
+
+class TestAnonymizeResponseForRating:
+    """Per-response scrub: a lettered response must not carry a de-anon handle."""
+
+    def _resp(self) -> AgentResponse:
+        return AgentResponse(
+            agent="codex", status="completed", content="answer",
+            duration_seconds=30.0, task_id="task-codex-123", session_id="sess-1",
+        )
+
+    def test_nulls_deanon_handles(self):
+        d = _anonymize_response_for_rating(self._resp())
+        assert d["agent"] == "anon"
+        assert d["session_id"] is None
+        assert d["duration_seconds"] is None  # joins with agent_timing(council_id)
+        assert d["task_id"] is None
+
+    def test_no_seat_or_join_key_in_serialized_response(self):
+        d = _anonymize_response_for_rating(self._resp())
+        serialized = json.dumps(d)
+        assert "codex" not in serialized
+        assert "task-codex-123" not in serialized
+        assert "30.0" not in serialized  # the timing join key is gone
+
+    def test_preserves_ratable_content(self):
+        d = _anonymize_response_for_rating(self._resp())
+        assert d["content"] == "answer"
+        assert d["status"] == "completed"
+
+    def test_none_returns_none(self):
+        assert _anonymize_response_for_rating(None) is None

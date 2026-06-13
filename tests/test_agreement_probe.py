@@ -1,9 +1,9 @@
 """Startup health-check for the agreement-judge model.
 
-External CLI catalogs (cursor-agent in particular) rotate frequently. A
-pinned model name that worked last week may be 404 today. Without a probe,
-owlex silently falls back to overlap-heuristic for weeks before anyone
-notices that `agreement_reason` keeps saying 'judge failed'.
+External CLI catalogs (codex's ChatGPT-account allowlist in particular)
+rotate. A pinned model name that worked last week may return 400 today.
+Without a probe, owlex silently falls back to overlap-heuristic for weeks
+before anyone notices that `agreement_reason` keeps saying 'judge failed'.
 
 The probe runs at server start. It is non-blocking: failure does NOT stop
 the server; it logs a clear warning. The judge itself still falls back to
@@ -12,7 +12,6 @@ heuristic at council time.
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import pytest
 
@@ -20,18 +19,19 @@ from owlex import agreement
 
 
 class _FakeProc:
-    def __init__(self, returncode: int, stderr: bytes):
+    def __init__(self, returncode: int, stdout: bytes = b"", stderr: bytes = b""):
         self.returncode = returncode
+        self._stdout = stdout
         self._stderr = stderr
 
-    async def communicate(self):
-        return b"OK\n", self._stderr
+    async def communicate(self, input: bytes | None = None):
+        return self._stdout, self._stderr
 
 
 @pytest.mark.asyncio
 async def test_probe_ok(monkeypatch):
     async def fake_exec(*args, **kw):
-        return _FakeProc(returncode=0, stderr=b"")
+        return _FakeProc(returncode=0, stdout=b"codex\nOK\n")
 
     monkeypatch.setattr(agreement.asyncio, "create_subprocess_exec", fake_exec)
     ok, msg = await agreement.probe_agreement_model(timeout=5.0)
@@ -41,16 +41,19 @@ async def test_probe_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_probe_detects_missing_model(monkeypatch):
-    """Cursor's exact error shape when a model name was removed from catalog."""
-    err = b"Cannot use this model: gemini-2.5-flash. Available models: gemini-3-flash, gpt-5.5..."
+    """Codex's error shape when a model name is not in the ChatGPT-account allowlist."""
+    out = (
+        b'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error",'
+        b'"message":"The \'fake-model\' model is not supported when using Codex with a ChatGPT account."}}\n'
+    )
 
     async def fake_exec(*args, **kw):
-        return _FakeProc(returncode=1, stderr=err)
+        return _FakeProc(returncode=1, stdout=out)
 
     monkeypatch.setattr(agreement.asyncio, "create_subprocess_exec", fake_exec)
     ok, msg = await agreement.probe_agreement_model(timeout=5.0)
     assert ok is False
-    assert "not in cursor-agent catalog" in msg
+    assert "not in codex catalog" in msg
     assert "OWLEX_AGREEMENT_MODEL" in msg  # tells the user how to fix
 
 
@@ -59,7 +62,7 @@ async def test_probe_handles_timeout(monkeypatch):
     class _SlowProc:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, input: bytes | None = None):
             await asyncio.sleep(10)
             return b"", b""
 
@@ -75,9 +78,9 @@ async def test_probe_handles_timeout(monkeypatch):
 @pytest.mark.asyncio
 async def test_probe_handles_missing_cli(monkeypatch):
     async def missing_exec(*args, **kw):
-        raise FileNotFoundError("agent")
+        raise FileNotFoundError("codex")
 
     monkeypatch.setattr(agreement.asyncio, "create_subprocess_exec", missing_exec)
     ok, msg = await agreement.probe_agreement_model(timeout=5.0)
     assert ok is False
-    assert "cursor-agent CLI not found" in msg
+    assert "codex CLI not found" in msg

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from bench import corpus, scorer
+from bench.corpus import reverse_unified_diff
 
 
 SEEDED_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "corpus", "seeded")
@@ -101,3 +102,100 @@ def test_decoys_are_not_also_labeled_bugs():
         bug_sites = {(b["file"], b["line"]) for b in item.get("bugs", [])}
         decoy_sites = {(d["file"], d["line"]) for d in item.get("decoys", []) or []}
         assert not (bug_sites & decoy_sites), f"{item['id']}: a decoy collides with a bug"
+
+
+# ---------------------------------------------------------------------------
+# reverse_unified_diff
+# ---------------------------------------------------------------------------
+
+_SAMPLE_FORWARD = (
+    "diff --git a/foo.py b/foo.py\n"
+    "index abc..def 100644\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -10,4 +10,4 @@ class Foo:\n"
+    " context_before\n"
+    "-old_line\n"
+    "+new_line\n"
+    " context_after\n"
+)
+
+_SAMPLE_REVERSED = (
+    "diff --git a/foo.py b/foo.py\n"
+    "index abc..def 100644\n"
+    "+++ a/foo.py\n"
+    "--- b/foo.py\n"
+    "@@ -10,4 +10,4 @@ class Foo:\n"
+    " context_before\n"
+    "+old_line\n"
+    "-new_line\n"
+    " context_after\n"
+)
+
+
+def test_reverse_unified_diff_swaps_added_and_removed():
+    """Reversing a -old/+new hunk yields +old/-new with swapped hunk ranges."""
+    result = reverse_unified_diff(_SAMPLE_FORWARD)
+    assert result == _SAMPLE_REVERSED
+
+
+def test_reverse_unified_diff_round_trip():
+    """reverse_unified_diff(reverse_unified_diff(d)) == d."""
+    assert reverse_unified_diff(reverse_unified_diff(_SAMPLE_FORWARD)) == _SAMPLE_FORWARD
+
+
+def test_reverse_unified_diff_round_trip_asymmetric_hunk():
+    """Round-trip holds when old/new line counts differ."""
+    diff = (
+        "--- a/bar.py\n"
+        "+++ b/bar.py\n"
+        "@@ -5,3 +5,5 @@\n"
+        " ctx\n"
+        "-removed_a\n"
+        "-removed_b\n"
+        "+added_x\n"
+        "+added_y\n"
+        "+added_z\n"
+        " ctx2\n"
+    )
+    assert reverse_unified_diff(reverse_unified_diff(diff)) == diff
+
+
+def test_reverse_unified_diff_new_file_becomes_deleted():
+    """A new-file diff (--- /dev/null) reverses to a deleted-file diff."""
+    diff = (
+        "--- /dev/null\n"
+        "+++ b/new.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+line1\n"
+        "+line2\n"
+    )
+    rev = reverse_unified_diff(diff)
+    assert "+++ /dev/null" in rev
+    assert "--- b/new.py" in rev
+    # The formerly added lines should now be removed
+    assert "-line1\n" in rev
+    assert "-line2\n" in rev
+    # Round-trip
+    assert reverse_unified_diff(rev) == diff
+
+
+def test_reverse_unified_diff_added_lines_point_at_buggy_code():
+    """After reversal, added_lines_by_file returns the OLD (buggy) line content."""
+    diff = (
+        "--- a/owlex/engine.py\n"
+        "+++ b/owlex/engine.py\n"
+        "@@ -100,3 +100,3 @@\n"
+        " ctx\n"
+        "-buggy_call()\n"
+        "+fixed_call()\n"
+        " ctx2\n"
+    )
+    rev = reverse_unified_diff(diff)
+    added = corpus.added_lines_by_file(rev)
+    # After reversal the +++ path becomes the old one (a/owlex/engine.py stripped
+    # of a/ prefix = owlex/engine.py), and the added line is the buggy one.
+    assert "owlex/engine.py" in added
+    lines = added["owlex/engine.py"]
+    assert any("buggy_call()" in v for v in lines.values())
+    assert not any("fixed_call()" in v for v in lines.values())

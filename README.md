@@ -70,6 +70,7 @@ Agents can operate with specialist perspectives that shape their analysis:
 | `maintainer` | Code maintainer - readability, testing, tech debt |
 | `dx` | Developer experience - ergonomics, documentation, errors |
 | `testing` | Testing specialist - coverage, strategies, edge cases |
+| `edge_case_adversary` | Adversarial test designer - enumerate breaking scenarios from the interface as a structured test spec |
 | `neutral` | No role injection (default) |
 
 **Assign roles explicitly:**
@@ -94,9 +95,17 @@ Predefined role combinations for common scenarios:
 | `devil_advocate` | skeptic | skeptic | skeptic | skeptic | skeptic |
 | `balanced` | security | perf | maintainer | dx | testing |
 | `optimal` | maintainer | architect | dx | skeptic | perf |
+| `test_spec` | edge_case_adversary | edge_case_adversary | edge_case_adversary | edge_case_adversary | edge_case_adversary |
 
 ```
 council_ask prompt="Is this design secure?" team="security_audit"
+```
+
+The `test_spec` team focuses the whole council on **generating** an exhaustive edge-case
+test specification from a flow + interface (rather than reviewing an implementation):
+
+```
+council_ask prompt="<describe the user flow + its interface>" team="test_spec"
 ```
 
 ### Individual Agent Sessions
@@ -113,6 +122,22 @@ council_ask prompt="Is this design secure?" team="security_audit"
 | `resume_claudeor_session` | Resume with session ID or `--continue` |
 | `start_aichat_session` | New AiChat session |
 | `resume_aichat_session` | Resume with session name |
+
+**Focusing a single model with a role.** `second_opinion` and every `start_*_session`
+tool accept an optional `role` (a builtin or `~/.owlex/roles.json` role id, e.g.
+`edge_case_adversary`). When set, the role's round-1 prefix is prepended to the prompt;
+when omitted the prompt is byte-identical to before. An unknown id is a hard error, not a
+silent no-op.
+
+> **Design decision:** unlike a council call, a single-model `role` framing does **not**
+> prepend the `COUNCIL_SYSTEM_INSTRUCTION` read-only-advisor preamble. These tools are
+> used to *generate* content (e.g. a test spec), where a "do not write anything, only
+> advise" framing would be counter-productive.
+
+```
+second_opinion prompt="<flow + interface>" role="edge_case_adversary"
+start_gemini_session prompt="<flow + interface>" role="edge_case_adversary"
+```
 
 ### Claude Code Skills
 

@@ -27,6 +27,8 @@ class RoleId(str, Enum):
     MAINTAINER = "maintainer"
     DX = "dx"  # Developer Experience
     TESTING = "testing"
+    SYNTHESIZER = "synthesizer"  # Peacemaker: integrate viewpoints without papering over disagreement
+    EDGE_CASE_ADVERSARY = "edge_case_adversary"  # Adversarial test designer: enumerate breaking scenarios from the interface
     NEUTRAL = "neutral"  # Default: no role injection
 
 
@@ -161,6 +163,26 @@ BUILTIN_ROLES: dict[str, RoleDefinition] = {
         ),
     ),
 
+    RoleId.SYNTHESIZER.value: RoleDefinition(
+        id=RoleId.SYNTHESIZER.value,
+        name="Synthesizer / Peacemaker",
+        description="Find the strongest common ground and integrate partial truths",
+        round_1_prefix=(
+            "[ROLE: Synthesizer]\n"
+            "You build the strongest integrated answer. Focus on:\n"
+            "- Identifying the correct core shared by multiple viewpoints\n"
+            "- Reconciling apparent conflicts into a coherent recommendation\n"
+            "- Naming the single best path when tradeoffs compete\n\n"
+        ),
+        round_2_prefix=(
+            "[ROLE: Synthesizer - Deliberation]\n"
+            "Integrate the council's answers into the strongest single recommendation. "
+            "But do NOT paper over real disagreement: if two positions are genuinely "
+            "incompatible, surface the tradeoff explicitly rather than splitting the "
+            "difference. Synthesis is not appeasement.\n\n"
+        ),
+    ),
+
     RoleId.ARCHITECT.value: RoleDefinition(
         id=RoleId.ARCHITECT.value,
         name="System Architect",
@@ -246,6 +268,35 @@ BUILTIN_ROLES: dict[str, RoleDefinition] = {
             "- Identify testing challenges in proposed solutions\n"
             "- Suggest test strategies and coverage gaps\n"
             "- Point out hard-to-test patterns\n\n"
+        ),
+    ),
+
+    RoleId.EDGE_CASE_ADVERSARY.value: RoleDefinition(
+        id=RoleId.EDGE_CASE_ADVERSARY.value,
+        name="Edge-Case Adversary",
+        description="Adversarial test designer: enumerate breaking scenarios from the flow + interface, not the implementation",
+        round_1_prefix=(
+            "[ROLE: Edge-Case Adversary]\n"
+            "You are an adversarial TEST DESIGNER. You are given a user flow and its "
+            "interface (inputs, outputs, contract) — NOT the implementation. Your job is "
+            "to enumerate the inputs and states that BREAK it. Probe every axis:\n"
+            "- Boundaries: empty, zero, one, max length, off-by-one, overflow\n"
+            "- Auth/permission edges: unauthenticated, wrong role, expired token, revoked access\n"
+            "- Concurrency: concurrent modification, double-submit, races, stale reads\n"
+            "- Failure injection: network failure, timeout, partial write, dependency down\n"
+            "- Malformed input: wrong type, unexpected encoding, injection, null/NaN\n\n"
+            "Output a STRUCTURED list of test scenarios. For each: the setup/input, the "
+            "axis it probes, and the EXPECTED behavior. Specify what the code MUST do in "
+            "each case — never describe what existing code does. You are writing the spec, "
+            "not reviewing an implementation.\n\n"
+        ),
+        round_2_prefix=(
+            "[ROLE: Edge-Case Adversary - Deliberation]\n"
+            "Maintain your adversarial test-designer perspective. Merge the council's "
+            "scenarios into one deduplicated spec, and add any breaking case the others "
+            "missed. Where two answers assert DIFFERENT expected behavior for the same "
+            "scenario, do NOT silently pick one — flag it as a spec ambiguity the author "
+            "must resolve.\n\n"
         ),
     ),
 
@@ -343,6 +394,34 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "claudeor": RoleId.SKEPTIC.value,       # Fast, unconstrained critic
             "aichat": RoleId.PERFORMANCE.value,     # Flexible model for perf analysis
             "cursor": RoleId.SECURITY.value,        # Multi-model agent for security review
+        },
+    ),
+
+    "test_spec": TeamPreset(
+        id="test_spec",
+        name="Test-Spec Team",
+        description="All seats act as edge-case adversaries to generate an exhaustive test specification",
+        assignments={
+            "codex": RoleId.EDGE_CASE_ADVERSARY.value,
+            "gemini": RoleId.EDGE_CASE_ADVERSARY.value,
+            "opencode": RoleId.EDGE_CASE_ADVERSARY.value,
+            "claudeor": RoleId.EDGE_CASE_ADVERSARY.value,
+            "aichat": RoleId.EDGE_CASE_ADVERSARY.value,
+            "cursor": RoleId.EDGE_CASE_ADVERSARY.value,
+        },
+    ),
+
+    "dialectic": TeamPreset(
+        id="dialectic",
+        name="Dialectic (balanced troublemaker/peacemaker)",
+        description="Research-aligned mix: 2 skeptics, 1 synthesizer, 3 specialists",
+        assignments={
+            "claudeor": RoleId.SKEPTIC.value,
+            "aichat": RoleId.SKEPTIC.value,
+            "gemini": RoleId.SYNTHESIZER.value,
+            "codex": RoleId.MAINTAINER.value,
+            "opencode": RoleId.ARCHITECT.value,
+            "cursor": RoleId.SECURITY.value,
         },
     ),
 }
@@ -628,3 +707,47 @@ def reload_resolver():
     """Reload the global resolver (useful after config file changes)."""
     global _resolver
     _resolver = create_default_resolver()
+
+
+def resolve_generate_role_prefix(role_id: str | None) -> str:
+    """Round-1 role prefix for single-model *generate* entrypoints.
+
+    Used by the single-model tools (second_opinion, start_*_session) to focus a
+    model with a role framing. Resolves ``role_id`` against the same merged
+    builtin + ``~/.owlex/roles.json`` registry that council uses.
+
+    Unlike council's ``inject_role_prefix``, this deliberately does NOT prepend
+    ``COUNCIL_SYSTEM_INSTRUCTION``: those tools *generate* content (e.g. a test
+    spec) rather than give read-only advice, so the read-only-advisor framing
+    would be counter-productive. (TASK-15 decision — see README / docstrings.)
+
+    Returns ``""`` for a falsy or non-``str`` ``role_id`` so the caller's prompt
+    stays byte-identical. Raises ``ValueError`` on an unknown id so the caller
+    surfaces a clear error instead of silently ignoring the requested framing.
+    """
+    # Non-str (e.g. a pydantic FieldInfo sentinel on a direct, non-MCP call) or
+    # empty → no framing. A whitespace-only id is truthy and falls through to the
+    # registry lookup, where it resolves to no role → ValueError (callers reject it).
+    if not isinstance(role_id, str) or not role_id:
+        return ""
+    resolver = get_resolver()  # cached registry — same path council uses
+    role = resolver.get_role(role_id)
+    if role is None:
+        available = ", ".join(sorted(resolver.list_roles()))
+        raise ValueError(f"Unknown role '{role_id}'. Available roles: {available}")
+    return role.round_1_prefix
+
+
+def frame_prompt_for_generation(prompt: str, role_id: str | None) -> tuple[str | None, str | None]:
+    """Prepend a role's round-1 prefix to ``prompt`` for single-model generate tools.
+
+    Shared by ``second_opinion`` and the ``start_*_session`` tools so role
+    resolution + error semantics stay identical across all single-model surfaces.
+    Returns ``(framed_prompt, None)`` on success, or ``(None, error_message)`` when
+    ``role_id`` is an unknown id — the caller wraps the message in its own response
+    type. ``role_id`` falsy/non-str → no framing (prompt returned verbatim).
+    """
+    try:
+        return resolve_generate_role_prefix(role_id) + prompt, None
+    except ValueError as e:
+        return None, str(e)

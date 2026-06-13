@@ -39,3 +39,8 @@ data/
 # Dashboard frontend build artifacts
 owlex/dashboard/web/node_modules/
 owlex/dashboard/web/dist/
+
+# AUDIT-10: private (council-DB-derived prompt text) — regenerable via bench/extract_db.py
+bench/corpus/db/
+# AUDIT-10: benchmark run artifacts — regenerable via bench/run.py
+bench/reports/

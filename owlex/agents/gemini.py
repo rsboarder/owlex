@@ -21,8 +21,18 @@ GEMINI_FAIL_PATTERNS = [
 
 
 def _normalize_path(path: str) -> str:
-    """Normalize a path for comparison: expanduser, abspath, normpath."""
-    return os.path.normpath(os.path.abspath(os.path.expanduser(path)))
+    """Normalize a path for comparison: expanduser, abspath, normpath, realpath.
+
+    On macOS, ``$TMPDIR`` evaluates to ``/var/folders/...`` but the kernel
+    resolves it to ``/private/var/folders/...`` when a subprocess inherits
+    that cwd. gemini-cli writes the *resolved* path into ``.project_root``,
+    so without ``realpath`` here, R1's stored path and R2's lookup string
+    never compare equal — the lookup falls back to exec mode every time,
+    and every R2 gemini call re-sends the full R1 context fresh.
+    """
+    return os.path.realpath(
+        os.path.normpath(os.path.abspath(os.path.expanduser(path)))
+    )
 
 
 def _find_gemini_project_dir(working_directory: str) -> Path | None:
