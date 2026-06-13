@@ -15,6 +15,14 @@ from ..engine import (
     claudeor_runner, aichat_runner, cursor_runner,
 )
 from ..models import Agent, ErrorCode, TaskResponse
+from ..roles import frame_prompt_for_generation
+
+
+_ROLE_FIELD_DESC = (
+    "Optional role id (builtin or ~/.owlex/roles.json) to focus the model, e.g. "
+    "'edge_case_adversary'. Prepends the role's round-1 framing to the prompt. "
+    "None → prompt unchanged. Unknown id → error."
+)
 
 
 def _err(msg: str, code: ErrorCode = ErrorCode.INVALID_ARGS) -> dict:
@@ -27,6 +35,26 @@ def _success(task, message: str) -> dict:
     ).model_dump()
 
 
+def _frame_with_role(prompt: str, role: str | None) -> tuple[str | None, dict | None]:
+    """Prepend the role's round-1 prefix to ``prompt`` (generate framing, no
+    council read-only-advisor instruction). Returns ``(framed, None)`` or, for an
+    unknown role id, ``(None, error_response)``. ``role=None`` → prompt unchanged.
+
+    Canonical validation order enforced at every start_*_session call site:
+      1. blank-prompt reject
+      2. role resolves  (this helper — called with the ORIGINAL, unstripped prompt)
+      3. working_directory valid
+      4. api_key / other config preconditions  (claudeor only)
+
+    Delegates resolution to roles.frame_prompt_for_generation (shared with
+    second_opinion) and adapts its error message to this module's _err dict.
+    """
+    framed, error_message = frame_prompt_for_generation(prompt, role)
+    if error_message is not None:
+        return None, _err(error_message)
+    return framed, None
+
+
 # === Codex ===
 
 @mcp.tool()
@@ -35,22 +63,31 @@ async def start_codex_session(
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for Codex (--cd flag)"),
     enable_search: bool = Field(default=True, description="Enable web search (--search flag)"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new Codex session (no prior context)."""
+    """Start a new Codex session (no prior context).
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
 
     task = engine.create_task(
         command=f"{Agent.CODEX.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory, "enable_search": enable_search},
+        args={"prompt": prompt, "working_directory": working_directory, "enable_search": enable_search},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, codex_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory, enable_search=enable_search,
+        prompt=prompt, working_directory=working_directory, enable_search=enable_search,
     ))
     return _success(task, "Codex session started. Use wait_for_task to get result.")
 
@@ -95,22 +132,31 @@ async def start_gemini_session(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for Gemini context"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new Gemini CLI session (no prior context)."""
+    """Start a new Gemini CLI session (no prior context).
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
 
     task = engine.create_task(
         command=f"{Agent.GEMINI.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        args={"prompt": prompt, "working_directory": working_directory},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, gemini_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory,
+        prompt=prompt, working_directory=working_directory,
     ))
     return _success(task, "Gemini session started. Use wait_for_task to get result.")
 
@@ -150,22 +196,31 @@ async def start_opencode_session(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for OpenCode context"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new OpenCode session (no prior context)."""
+    """Start a new OpenCode session (no prior context).
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
 
     task = engine.create_task(
         command=f"{Agent.OPENCODE.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        args={"prompt": prompt, "working_directory": working_directory},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, opencode_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory,
+        prompt=prompt, working_directory=working_directory,
     ))
     return _success(task, "OpenCode session started. Use wait_for_task to get result.")
 
@@ -208,10 +263,19 @@ async def start_claudeor_session(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for Claude context"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new Claude Code session via OpenRouter."""
+    """Start a new Claude Code session via OpenRouter.
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
@@ -220,12 +284,12 @@ async def start_claudeor_session(
 
     task = engine.create_task(
         command=f"{Agent.CLAUDEOR.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        args={"prompt": prompt, "working_directory": working_directory},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, claudeor_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory,
+        prompt=prompt, working_directory=working_directory,
     ))
     model_info = f" ({config.claudeor.model})" if config.claudeor.model else ""
     return _success(task, f"Claude OpenRouter{model_info} session started. Use wait_for_task to get result.")
@@ -272,22 +336,31 @@ async def start_aichat_session(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for aichat context"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new aichat session."""
+    """Start a new aichat session.
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
 
     task = engine.create_task(
         command=f"{Agent.AICHAT.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        args={"prompt": prompt, "working_directory": working_directory},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, aichat_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory,
+        prompt=prompt, working_directory=working_directory,
     ))
     model_info = f" ({config.aichat.model})" if config.aichat.model else ""
     return _success(task, f"AiChat{model_info} session started. Use wait_for_task to get result.")
@@ -333,22 +406,31 @@ async def start_cursor_session(
     ctx: Context[ServerSession, None],
     prompt: str = Field(description="The question or request to send"),
     working_directory: str | None = Field(default=None, description="Working directory for Cursor Agent (--workspace flag)"),
+    role: str | None = Field(default=None, description=_ROLE_FIELD_DESC),
 ) -> dict:
-    """Start a new Cursor Agent CLI session."""
+    """Start a new Cursor Agent CLI session.
+
+    Pass ``role`` (e.g. "edge_case_adversary") to focus the model with a
+    builtin/user role framing — its round-1 prefix is prepended to the prompt.
+    ``role=None`` leaves the prompt byte-identical.
+    """
     if not prompt or not prompt.strip():
         return _err("'prompt' parameter is required.")
+    prompt, role_err = _frame_with_role(prompt, role)
+    if role_err:
+        return role_err
     working_directory, error = validate_working_directory(working_directory)
     if error:
         return _err(error)
 
     task = engine.create_task(
         command=f"{Agent.CURSOR.value}_exec",
-        args={"prompt": prompt.strip(), "working_directory": working_directory},
+        args={"prompt": prompt, "working_directory": working_directory},
         context=ctx,
     )
     task.async_task = asyncio.create_task(engine.run_agent(
         task, cursor_runner, mode="exec",
-        prompt=prompt.strip(), working_directory=working_directory,
+        prompt=prompt, working_directory=working_directory,
     ))
     model_info = f" ({config.cursor.model})" if config.cursor.model else ""
     return _success(task, f"Cursor{model_info} session started. Use wait_for_task to get result.")

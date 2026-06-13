@@ -16,6 +16,44 @@ from ..engine import DEFAULT_TIMEOUT
 from ..models import ErrorCode, TaskResponse
 from ..prompts import anonymize_round_responses
 
+# Seat-identity fields that would let a reader correlate the blind letters
+# (A/B/C…) back to specific agents. They stay in the DB + the agent_timing
+# tool for post-rating analysis, but must NOT appear in the rater-facing
+# council_ask payload (blind-rating invariant — see prompts.anonymize_round_responses).
+_RATER_FACING_METADATA_DROP = ("timing", "slowest_agent", "log")
+
+
+def _sanitize_metadata_for_rating(metadata) -> dict:
+    """Strip agent-identifying fields from council metadata before returning it
+    to the (blind) rater. Keeps non-identifying scalars (total_duration_seconds,
+    rounds)."""
+    d = metadata.model_dump()
+    for k in _RATER_FACING_METADATA_DROP:
+        d.pop(k, None)
+    return d
+
+
+def _anonymize_response_for_rating(ar):
+    """Anonymize one AgentResponse for the blind rater.
+
+    Nulls every handle that could re-identify the response's agent seat:
+      - agent / session_id: the seat name itself.
+      - duration_seconds: joins with the agent_timing(council_id) tool (per-seat
+        durations) to recover letter→seat, so the blind letters must not carry it.
+      - task_id: a per-task handle usable with the task tools.
+    The real values remain in the DB for post-rating analysis; only the
+    rater-facing payload is scrubbed. See the blind-rating invariant on
+    prompts.anonymize_round_responses. Returns None when ``ar`` is None.
+    """
+    if ar is None:
+        return None
+    d = ar.model_dump()
+    d["agent"] = "anon"
+    d["session_id"] = None
+    d["duration_seconds"] = None
+    d["task_id"] = None
+    return d
+
 
 @mcp.tool()
 async def council_ask(
@@ -105,18 +143,10 @@ async def council_ask(
             import sys as _sys, traceback as _tb
             _tb.print_exc(file=_sys.stderr); _sys.stderr.flush()
 
-    def _to_anon(ar):
-        if ar is None:
-            return None
-        d = ar.model_dump()
-        d["agent"] = "anon"
-        d["session_id"] = None
-        return d
-
     def _round_payload(by_label):
         if not by_label:
             return None
-        return {label: _to_anon(ar) for label, ar in by_label.items()}
+        return {label: _anonymize_response_for_rating(ar) for label, ar in by_label.items()}
 
     r1_payload = _round_payload(r1_by_label)
     r2_payload = _round_payload(r2_by_label)
@@ -140,7 +170,7 @@ async def council_ask(
         "claude_opinion": response.claude_opinion.model_dump() if response.claude_opinion else None,
         "round_1": r1_payload,
         "round_2": r2_payload,
-        "metadata": response.metadata.model_dump(),
+        "metadata": _sanitize_metadata_for_rating(response.metadata),
     }
 
 

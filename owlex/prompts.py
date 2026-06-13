@@ -49,6 +49,23 @@ DELIBERATION_INSTRUCTION_CRITIQUE = (
 )
 
 
+# Always-on R2 anti-sycophancy prior. Injected at the single deliberation
+# choke-point so it binds both revise and critique modes and role-injected R2.
+# Evidence: a sycophancy prior (weigh arguments on merit, not agreement) gave
+# +10.5% absolute accuracy in multi-agent debate (CONSENSAGENT, ACL 2025).
+ANTISYCOPHANCY_PREAMBLE = (
+    "DELIBERATION INTEGRITY (read first):\n"
+    "- Weigh each argument on its merits and evidence, NOT on how many peers hold it "
+    "or who holds it.\n"
+    "- Do NOT change your answer simply because others disagree. Change it ONLY if "
+    "their reasoning is genuinely stronger than yours.\n"
+    "- Preserve real disagreement. Premature consensus is a failure, not a success. "
+    "If you still think the majority is wrong, say so and explain why.\n"
+    "- If you DO converge, it must be because you were persuaded by a specific point — "
+    "name that point.\n\n"
+)
+
+
 def anonymize_round_responses(round_data, *, salt: str | None = None):
     """Shuffle a CouncilRound's per-agent responses and assign letter labels.
 
@@ -61,6 +78,17 @@ def anonymize_round_responses(round_data, *, salt: str | None = None):
     Python's global ``random.shuffle`` via the shared anonymizer helper.
 
     Returns (None, None) when round_data is None.
+
+    Blind-rating invariant: the lettered responses produced here are specifically
+    anonymized so that ``rate_council`` is blind — the orchestrator rates quality
+    without knowing which letter maps to which agent (no self-preference or brand
+    bias). Any field surfaced to the rater in the ``council_ask`` payload,
+    especially ``CouncilMetadata``, must not allow re-identifying letters → seats.
+    The metadata fields ``timing``, ``slowest_agent``, and ``log`` are stripped by
+    ``_sanitize_metadata_for_rating``, and each lettered response's
+    ``duration_seconds`` + ``task_id`` are nulled by ``_anonymize_response_for_rating``
+    (both in server/_council.py) — the latter closes the cross-tool join where a
+    response's duration could be matched against ``agent_timing(council_id)``.
     """
     if round_data is None:
         return None, None
@@ -118,7 +146,7 @@ def build_deliberation_prompt(
         intro = DELIBERATION_INTRO_REVISE
         instruction = DELIBERATION_INSTRUCTION_REVISE
 
-    parts = [COUNCIL_SYSTEM_INSTRUCTION + intro]
+    parts = [COUNCIL_SYSTEM_INSTRUCTION + intro, "", ANTISYCOPHANCY_PREAMBLE.rstrip()]
 
     if include_original and original_prompt:
         parts.extend(["", "ORIGINAL QUESTION:", original_prompt])
