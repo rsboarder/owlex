@@ -1,10 +1,10 @@
 ---
 id: TASK-9
 title: 'AUDIT-10: Scale & stratify the benchmark corpus'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-10 16:14'
-updated_date: '2026-06-10 18:34'
+updated_date: '2026-06-10 20:18'
 labels:
   - audit-hardening
 dependencies:
@@ -53,4 +53,8 @@ Per-ticket handover: docs/handovers/audit-10-corpus-scale.md. Scope = full plan 
 Build complete — all 9 sub-parts shipped, bench 175 tests + tests/ 303 green. Corpus scaled 9→103 items across 6 sources (seeded/real-fix/mutant/dataset/decoy/db-llm-label), full bug_type taxonomy, deterministic hash-derived held-out split (derive_holdout=18), corpus_hash freeze, README anti-p-hacking section, flywheel (table+design doc). Labeling workflow: 89 DB targets → 14 reviewable/19 soft bugs. было/стало (corpus robustness) delivered. Live стало probe (24 codex calls): seeded precision 0.96/recall 1.00 vs dataset 0.22/0.33 vs real-fix 0.00 — CONFIRMS P0 over-fit (seeded numbers don't generalize), honest revision. Two construction bugs found, blocking trustworthy mined/dataset/mutant live numbers — see follow-up task. Handover: docs/handovers/audit-10-corpus-scale.md.
 
 Construction bugs fixed under TASK-10; live numbers now trustworthy. Corrected was/now headline: seeded-only corpus 0.96 precision looked great but real bugs (dataset/real-fix) hit recall≈1.00 / precision 0.75-0.92 once shown buggy code — over-fit concern resolves to a PRECISION-on-clean-code risk (decoy stratum precision 0.00), not a recall gap. Numbers directional (2 items/source, K=3).
+
+CORRECTION (supersedes earlier 'auditor mediocre on real bugs ~33-60%'): that was a CORPUS-LABEL ARTIFACT, not auditor weakness. Widened real-fix probe (15 items, K=3, bench/exp_lens.json) showed recall 0.33, but inspecting the misses (bench/show_label.py) revealed mine_fixes auto-anchors each bug label at the FIRST changed line of the reversed diff — which for real commits is usually an import/comment/config line, NOT the defect (e.g. fix-1bbcd1a labeled at `from typing import Optional`; fix-63c88dd labeled on markdown in a docs commit). Many mined 'fix' commits are multi-line/multi-file/docs with no single localizable bug. So owlex-mined real-fix labels are UNRELIABLE. On TRUSTWORTHY strata the auditor performs WELL: seeded 0.98, mutants 1.00, BugsInPy real Python bugs 0.92/recall 1.00. Net: the P0 over-fit fear largely resolves in the auditor's favor; the weak link is our owlex-history mining, not the auditor. Lens A/B experiment (baseline vs +API/contract dimension) was NEGATIVE — recall 0.33→0.33, precision slightly down, target bug still missed, 1 item improved / 2 regressed (prompt-sensitivity noise) — NOT promoted to the skill.
+
+DONE. Corpus scaled 9→103 items, 6 sources, stratification schema + hash freeze + deterministic held-out split + flywheel design + README anti-p-hacking. Committed fbf8e90 + 1e9b4e7. Trustworthy-labeled strata = seeded+mutant+dataset(BugsInPy); owlex-mined demoted to unlabeled realism targets (labels were garbage — AUDIT-10e). CORRECTED HEADLINE: on well-labeled bugs the auditor is strong (recall ~1.00, precision ~0.95: seeded 0.98/1.00, mutant 1.00/1.00, BugsInPy 0.92/1.00). The P0 over-fit fear resolved in the auditor's favor; the lens-improvement experiment was a negative result. Open children: TASK-12/AUDIT-10d (equivalent-mutant precision instrument) — the only remaining real open question (true hallucination rate). Sub-tasks 10b/10c/10e all Done.
 <!-- SECTION:NOTES:END -->

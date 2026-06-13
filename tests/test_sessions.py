@@ -585,3 +585,21 @@ class TestGeminiParseSessionIdEndToEnd:
                     "", working_directory="/nonexistent/project"
                 )
                 assert result is None
+
+    def test_normalize_path_resolves_symlinks(self):
+        """Regression for macOS /var → /private/var symlink in $TMPDIR.
+
+        gemini-cli writes the realpath of its cwd into .project_root. On macOS
+        $TMPDIR is `/var/folders/...` but the kernel resolves it to
+        `/private/var/folders/...` when a subprocess inherits the cwd. Without
+        realpath in _normalize_path the strings never compare equal, and every
+        R2 falls back to exec mode — the "Gemini session ID not found" log
+        line in every council.
+        """
+        import os
+        from owlex.agents.gemini import _normalize_path
+
+        tmpdir = os.environ.get("TMPDIR", "/tmp")
+        assert _normalize_path(tmpdir) == os.path.realpath(tmpdir)
+        # Also: passing a symlinked form and its realpath form must compare equal.
+        assert _normalize_path(tmpdir) == _normalize_path(os.path.realpath(tmpdir))

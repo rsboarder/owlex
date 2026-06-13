@@ -112,6 +112,7 @@ from . import _resources  # noqa: E402,F401
 from . import _sessions   # noqa: E402,F401
 from . import _tasks      # noqa: E402,F401
 from . import _council    # noqa: E402,F401
+from . import _second_opinion  # noqa: E402,F401
 
 # Back-compat: tests and external callers may import the tool functions
 # directly off the package. Re-export the FastMCP-wrapped callables.
@@ -127,6 +128,7 @@ from ._tasks import (  # noqa: E402,F401
     get_task_result, wait_for_task, list_tasks, cancel_task, agent_timing,
 )
 from ._council import council_ask, rate_council  # noqa: E402,F401
+from ._second_opinion import second_opinion  # noqa: E402,F401
 from ._resources import get_agents, get_council_status  # noqa: E402,F401
 
 
@@ -168,14 +170,18 @@ def main():
         from .. import derivations as _derivations
         derivation_worker = asyncio.create_task(_derivations.run_worker())
 
-        # Probe the agreement-judge model. External CLI catalogs (cursor-agent)
-        # rotate, and a stale pinned model name silently degrades the judge
-        # to overlap-heuristic without surfacing the failure. Non-blocking:
-        # if the probe fails, log loudly but let the server start anyway.
+        # Probe the agreement-judge model. External CLI catalogs (codex's
+        # ChatGPT-account allowlist) rotate, and a stale pinned model name
+        # silently degrades the judge to overlap-heuristic without surfacing
+        # the failure. Non-blocking: if the probe fails, log loudly but let
+        # the server start anyway. 30s accommodates codex's cold-start
+        # latency (~12-15s on first invocation per process for config load
+        # + auth handshake); 10s produced spurious [WARN] alarms on freshly
+        # respawned MCP servers.
         async def _probe_agreement():
             try:
                 from .. import agreement as _agreement
-                ok, msg = await _agreement.probe_agreement_model(timeout=10.0)
+                ok, msg = await _agreement.probe_agreement_model(timeout=30.0)
                 tag = "[ok]" if ok else "[WARN]"
                 log(f"{tag} agreement health-check: {msg}")
             except Exception as _e:

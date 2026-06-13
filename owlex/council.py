@@ -191,7 +191,19 @@ class Council:
 
     # Consistency threshold for auto-deliberation.
     # Below this = agents disagree enough to warrant R2. Above = skip R2.
-    AUTO_DELIBERATION_THRESHOLD = 2.5
+    # Calibrated against the judge rubric (1-5):
+    #   1 = Fundamental disagreement
+    #   2 = Significant differences
+    #   3 = Partial agreement (same direction, different emphasis)
+    #   4 = Strong agreement (minor variation)
+    #   5 = Full consensus
+    # With threshold=2.5, real-world councils landing at 3.0 ("partial
+    # agreement, diverge on ship blockers") were skipping R2 even though the
+    # judge's reason text literally flagged divergence. Threshold=4.0 means
+    # R2 fires unless the council reaches strong agreement — restoring R2
+    # as a meaningful step rather than a dead-letter branch only hit by
+    # heuristic-fallback scores.
+    AUTO_DELIBERATION_THRESHOLD = 4.0
 
     async def deliberate(
         self,

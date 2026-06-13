@@ -8,7 +8,7 @@
 
 ## Architecture (one-line per layer)
 
-- `owlex/server/` — FastMCP entry. Tools: `council_ask`, `rate_council`, `start_*_session`, `resume_*_session`, etc.
+- `owlex/server/` — FastMCP entry. Tools: `council_ask`, `rate_council`, `second_opinion`, `start_*_session`, `resume_*_session`, etc.
 - `owlex/council.py` — R1/R2 orchestration, role assignment, anonymization, outcome assembly. Calls `EnginePort` only.
 - `owlex/engine.py` — subprocess lifecycle, stream readers, heartbeat, recursion fence, output cap.
 - `owlex/derivations.py` — **long-lived worker** for analytics writes (pairwise, position deltas, skills). Survives request scope.
@@ -90,6 +90,9 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
 | `OWLEX_AGREEMENT_MODEL` | `gpt-5.5` | Model used by the judge (codex CLI) |
 | `OWLEX_AGREEMENT_REASONING` | `low` | Reasoning effort for judge (`low`/`medium`/`high`) |
 | `OWLEX_AGREEMENT_TIMEOUT` | `90` | Per-call timeout for agreement judge (s) |
+| `OWLEX_SECOND_OPINION_MODEL` | `gpt-5.5` | Model for the `second_opinion` tool (codex CLI) |
+| `OWLEX_SECOND_OPINION_REASONING` | `high` | Reasoning effort for `second_opinion` (`low`/`medium`/`high`) |
+| `OWLEX_SECOND_OPINION_TIMEOUT` | `120` | Per-call timeout for `second_opinion` (s) |
 | `OWLEX_HOME` | `~/.owlex` | Persistence root. Set by tests' autouse fixture. |
 | `OWLEX_AGENT_MAX_OUTPUT_BYTES` | `25_000_000` | Per-stream output cap for runaway agents |
 | `OWLEX_DISABLE_SERVER_LOG` | `""` | Set `1` to skip stderr-tee log file |
