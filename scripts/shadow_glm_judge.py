@@ -1,15 +1,18 @@
-"""Shadow-mode replay of the agreement judge through Grok CLI.
+"""Shadow-mode replay of the agreement judge through GLM-5.2.
 
 Read-only experiment that re-runs the agreement-judge prompt against historical
-council R1 responses, then compares grok-build's scores to the existing judge
+council R1 responses, then compares GLM-5.2's scores to the existing judge
 (gpt-5.5 via codex CLI) recorded in council_outcomes.agreement_score.
 
+GLM-5.2 is reached via Z.ai's Anthropic-compatible endpoint (see _glm_client.py),
+the same endpoint family the `claudeor` seat would use to run GLM in production.
+
 Output:
-  scripts/shadow_results/agreement_replay.jsonl  — one JSON line per council
-  scripts/shadow_results/agreement_summary.md    — kappa, confusion matrix, etc.
+  scripts/shadow_results/agreement_replay_glm.jsonl  — one JSON line per council
+  scripts/shadow_results/agreement_summary_glm.md    — kappa, confusion matrix, etc.
 
 Usage:
-  python scripts/shadow_grok_judge.py [--limit N] [--threshold 3.5]
+  OWLEX_GLM_TOKEN=<key> python scripts/shadow_glm_judge.py [--limit N] [--threshold 3.5]
 """
 from __future__ import annotations
 
@@ -23,13 +26,13 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _glm_client import GLM_MODEL, call_glm as _glm_call  # noqa: E402
+
 OWLEX_DB = Path(os.path.expanduser("~/.owlex/owlex.db"))
 RESULTS_DIR = Path(__file__).parent / "shadow_results"
-JSONL_PATH = RESULTS_DIR / "agreement_replay.jsonl"
-SUMMARY_PATH = RESULTS_DIR / "agreement_summary.md"
-
-GROK_MODEL = os.getenv("OWLEX_GROK_MODEL", "grok-build")
-GROK_TIMEOUT = int(os.getenv("OWLEX_GROK_TIMEOUT", "120"))
+JSONL_PATH = RESULTS_DIR / "agreement_replay_glm.jsonl"
+SUMMARY_PATH = RESULTS_DIR / "agreement_summary_glm.md"
 
 COUNCIL_SYSTEM_PREFIX = "IMPORTANT: This is a council deliberation."
 PROJECT_CONTEXT_MARKER = "PROJECT CONTEXT:"
@@ -128,34 +131,17 @@ def build_prompt(council: dict) -> str | None:
     return AGREEMENT_PROMPT.format(question=question, responses="\n\n".join(parts))
 
 
-async def call_grok(prompt: str) -> tuple[str, str | None]:
-    """Run grok CLI in single-prompt mode. Returns (text, error_or_None)."""
-    proc = await asyncio.create_subprocess_exec(
-        "grok", "-p", prompt,
-        "--output-format", "json",
-        "--always-approve",
-        "--model", GROK_MODEL,
-        "--disable-web-search",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=GROK_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return "", f"timeout after {GROK_TIMEOUT}s"
-    if proc.returncode != 0:
-        return "", f"grok exit {proc.returncode}: {stderr.decode(errors='replace')[:200]}"
-    out = stdout.decode(errors="replace").strip()
-    return out, None
+async def call_glm(prompt: str) -> tuple[str, str | None]:
+    """Call GLM-5.2; wrap the reply in a {"text": ...} envelope so the existing
+    parser (written for the GLM CLI's JSON shape) works unchanged."""
+    text, err = await _glm_call(prompt, max_tokens=512)
+    if err:
+        return "", err
+    return json.dumps({"text": text}), None
 
 
-def parse_grok_response(raw: str) -> tuple[float | None, str, str | None]:
-    """Parse grok --output-format json wrapper, then inner agreement JSON."""
+def parse_glm_response(raw: str) -> tuple[float | None, str, str | None]:
+    """Parse the {"text": ...} envelope, then inner agreement JSON."""
     try:
         outer = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -223,7 +209,7 @@ async def main():
     parser.add_argument("--threshold", type=float, default=3.5,
                         help="agreement score < threshold triggers R2 in production logic")
     parser.add_argument("--sleep", type=float, default=0.5,
-                        help="sleep between grok calls (rate-limit friendly)")
+                        help="sleep between glm calls (rate-limit friendly)")
     args = parser.parse_args()
 
     if not OWLEX_DB.exists():
@@ -247,17 +233,17 @@ async def main():
                 continue
 
             t0 = time.time()
-            raw, err = await call_grok(prompt)
+            raw, err = await call_glm(prompt)
             elapsed = time.time() - t0
             if err:
-                print(f"[{i}/{len(councils)}] {cid} — grok error: {err} ({elapsed:.1f}s)")
+                print(f"[{i}/{len(councils)}] {cid} — glm error: {err} ({elapsed:.1f}s)")
                 row = {
                     "council_id": cid,
                     "original_score": council["agreement_score"],
                     "original_reason": council["agreement_reason"],
-                    "grok_score": None,
-                    "grok_reason": "",
-                    "grok_error": err,
+                    "glm_score": None,
+                    "glm_reason": "",
+                    "glm_error": err,
                     "elapsed_s": elapsed,
                     "n_responses": len(council["r1_calls"]),
                 }
@@ -266,15 +252,15 @@ async def main():
                 results.append(row)
                 continue
 
-            grok_score, grok_reason, parse_err = parse_grok_response(raw)
+            glm_score, glm_reason, parse_err = parse_glm_response(raw)
             row = {
                 "council_id": cid,
                 "original_score": council["agreement_score"],
                 "original_reason": council["agreement_reason"],
                 "original_deliberation": council["deliberation"],
-                "grok_score": grok_score,
-                "grok_reason": grok_reason,
-                "grok_error": parse_err,
+                "glm_score": glm_score,
+                "glm_reason": glm_reason,
+                "glm_error": parse_err,
                 "elapsed_s": round(elapsed, 2),
                 "n_responses": len(council["r1_calls"]),
             }
@@ -283,8 +269,8 @@ async def main():
             results.append(row)
             orig = council["agreement_score"]
             orig_s = f"{orig:.1f}" if isinstance(orig, (int, float)) else str(orig)
-            grok_s = f"{grok_score}" if grok_score is not None else "ERR"
-            print(f"[{i}/{len(councils)}] {cid} — orig={orig_s} grok={grok_s} ({elapsed:.1f}s)")
+            glm_s = f"{glm_score}" if glm_score is not None else "ERR"
+            print(f"[{i}/{len(councils)}] {cid} — orig={orig_s} glm={glm_s} ({elapsed:.1f}s)")
             if args.sleep > 0:
                 await asyncio.sleep(args.sleep)
 
@@ -294,32 +280,32 @@ async def main():
 
 
 def write_summary(rows: list[dict], threshold: float):
-    valid = [r for r in rows if r.get("grok_score") is not None and r.get("original_score") is not None]
-    failed = [r for r in rows if r.get("grok_error")]
+    valid = [r for r in rows if r.get("glm_score") is not None and r.get("original_score") is not None]
+    failed = [r for r in rows if r.get("glm_error")]
     judge_failed_orig = [r for r in rows if r.get("original_reason") in ("judge failed", "judge timeout", "judge error")]
 
     orig_scores = [r["original_score"] for r in valid]
-    grok_scores = [r["grok_score"] for r in valid]
+    glm_scores = [r["glm_score"] for r in valid]
     orig_r2 = [1 if r["original_score"] < threshold else 0 for r in valid]
-    grok_r2 = [1 if r["grok_score"] < threshold else 0 for r in valid]
+    glm_r2 = [1 if r["glm_score"] < threshold else 0 for r in valid]
 
-    kappa = cohens_kappa(orig_r2, grok_r2)
-    corr = pearson(orig_scores, grok_scores)
+    kappa = cohens_kappa(orig_r2, glm_r2)
+    corr = pearson(orig_scores, glm_scores)
 
-    tp = sum(1 for o, g in zip(orig_r2, grok_r2) if o == 1 and g == 1)
-    tn = sum(1 for o, g in zip(orig_r2, grok_r2) if o == 0 and g == 0)
-    fp = sum(1 for o, g in zip(orig_r2, grok_r2) if o == 0 and g == 1)
-    fn = sum(1 for o, g in zip(orig_r2, grok_r2) if o == 1 and g == 0)
+    tp = sum(1 for o, g in zip(orig_r2, glm_r2) if o == 1 and g == 1)
+    tn = sum(1 for o, g in zip(orig_r2, glm_r2) if o == 0 and g == 0)
+    fp = sum(1 for o, g in zip(orig_r2, glm_r2) if o == 0 and g == 1)
+    fn = sum(1 for o, g in zip(orig_r2, glm_r2) if o == 1 and g == 0)
 
     mean_orig = sum(orig_scores) / len(orig_scores) if orig_scores else float("nan")
-    mean_grok = sum(grok_scores) / len(grok_scores) if grok_scores else float("nan")
+    mean_glm = sum(glm_scores) / len(glm_scores) if glm_scores else float("nan")
 
-    # Grok-saves: cases where original judge failed but grok produced a valid score
-    grok_saves = [r for r in valid if r.get("original_reason") in ("judge failed", "judge timeout", "judge error")]
+    # GLM-saves: cases where original judge failed but glm produced a valid score
+    glm_saves = [r for r in valid if r.get("original_reason") in ("judge failed", "judge timeout", "judge error")]
 
-    md = f"""# Agreement-Judge Shadow Replay — grok-build vs gpt-5.5
+    md = f"""# Agreement-Judge Shadow Replay — GLM-5.2 vs gpt-5.5
 
-**Model**: `{GROK_MODEL}` via Grok CLI
+**Model**: `{GLM_MODEL}` via Z.ai (Anthropic-compatible API)
 **Generated**: {time.strftime("%Y-%m-%d %H:%M:%S")}
 **Threshold for R2-needed**: agreement_score < {threshold}
 
@@ -328,10 +314,10 @@ def write_summary(rows: list[dict], threshold: float):
 | Metric | Count |
 |---|---|
 | Total councils replayed | {len(rows)} |
-| Successful grok calls (parsed) | {len(valid)} |
-| Failed grok calls / parse errors | {len(failed)} |
+| Successful glm calls (parsed) | {len(valid)} |
+| Failed glm calls / parse errors | {len(failed)} |
 | Original judge had failed (fallback to overlap) | {len(judge_failed_orig)} |
-| **Grok saves** (original failed, grok produced score) | {len(grok_saves)} |
+| **GLM saves** (original failed, glm produced score) | {len(glm_saves)} |
 
 ## Score correlation
 
@@ -339,7 +325,7 @@ def write_summary(rows: list[dict], threshold: float):
 |---|---|
 | Pearson correlation (raw 1-5 scores) | {corr:.3f} |
 | Mean original score | {mean_orig:.2f} |
-| Mean grok score | {mean_grok:.2f} |
+| Mean glm score | {mean_glm:.2f} |
 
 ## R2-needed decision agreement (binary, threshold={threshold})
 
@@ -348,9 +334,9 @@ def write_summary(rows: list[dict], threshold: float):
 | Cohen's kappa | {kappa:.3f} |
 | Agreement % | {(tp + tn) / len(valid) * 100 if valid else 0:.1f}% |
 
-Confusion matrix (rows = orig judge, cols = grok):
+Confusion matrix (rows = orig judge, cols = glm):
 
-|              | grok says R2 NOT needed | grok says R2 needed |
+|              | glm says R2 NOT needed | glm says R2 needed |
 |---|---|---|
 | orig R2 NOT needed | TN={tn} | FP={fp} |
 | orig R2 needed     | FN={fn} | TP={tp} |
@@ -359,17 +345,17 @@ Confusion matrix (rows = orig judge, cols = grok):
 
 | Kappa | Verdict |
 |---|---|
-| > 0.8 | Grok can REPLACE current judge (high agreement) |
-| 0.6–0.8 | Grok can ENSEMBLE with current judge (cross-validation) |
-| 0.4–0.6 | Grok is too divergent — not safe to substitute |
-| < 0.4 | Grok diverges fundamentally — different judgment criteria |
+| > 0.8 | GLM can REPLACE current judge (high agreement) |
+| 0.6–0.8 | GLM can ENSEMBLE with current judge (cross-validation) |
+| 0.4–0.6 | GLM is too divergent — not safe to substitute |
+| < 0.4 | GLM diverges fundamentally — different judgment criteria |
 
 Pearson correlation interpretation: > 0.7 strong, 0.4–0.7 moderate, < 0.4 weak.
 
-## Grok-saves potential
+## GLM-saves potential
 
-Of {len(judge_failed_orig)} councils where the original judge failed, grok produced a valid score in {len(grok_saves)}.
-If kappa is high, grok could serve as fallback when codex judge fails.
+Of {len(judge_failed_orig)} councils where the original judge failed, glm produced a valid score in {len(glm_saves)}.
+If kappa is high, glm could serve as fallback when codex judge fails.
 """
     SUMMARY_PATH.write_text(md)
 

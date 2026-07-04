@@ -1,0 +1,19 @@
+### PANEL start Thu Jun 18 00:11:08 +04 2026
+[init] 13 councils × 3 raters (gpt5.5, claude, gemini)
+[1/13] 195002 — GLM ranks {'gpt5.5': 4, 'claude': 2, 'gemini': 3} of 4 (69s)
+[2/13] 162255 — GLM ranks {'gpt5.5': 2, 'claude': 1, 'gemini': 1} of 4 (63s)
+[3/13] 143342 — GLM ranks {'gpt5.5': 4, 'claude': 1, 'gemini': 4} of 4 (79s)
+[4/13] 221858 — GLM ranks {'gpt5.5': 4, 'claude': None, 'gemini': 2} of 4 (180s)
+[5/13] 235145 — GLM ranks {'gpt5.5': 2, 'claude': 3, 'gemini': 1} of 4 (61s)
+[6/13] 210711 — GLM ranks {'gpt5.5': 2, 'claude': 1, 'gemini': 2} of 4 (58s)
+[7/13] 161139 — GLM ranks {'gpt5.5': 3, 'claude': 4, 'gemini': 3} of 4 (71s)
+[8/13] 144014 — GLM ranks {'gpt5.5': 4, 'claude': 1, 'gemini': 1} of 4 (68s)
+[9/13] 114332 — GLM ranks {'gpt5.5': 4, 'claude': 3, 'gemini': 2} of 4 (56s)
+[10/13] 224913 — GLM ranks {'gpt5.5': 4, 'claude': 3, 'gemini': 4} of 4 (63s)
+[11/13] 005936 — GLM ranks {'gpt5.5': 4, 'claude': 4, 'gemini': 3} of 4 (55s)
+[12/13] 233423 — GLM ranks {'gpt5.5': 4, 'claude': 1, 'gemini': 2} of 4 (58s)
+[13/13] 124243 — GLM ranks {'gpt5.5': 4, 'claude': 1, 'gemini': 1} of 4 (62s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_quality_panel.jsonl
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_quality_panel.md
+### PANEL DONE Thu Jun 18 00:26:55 +04 2026

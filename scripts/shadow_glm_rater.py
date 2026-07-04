@@ -1,16 +1,18 @@
-"""Shadow-mode replay of the blind orchestrator-rater through Grok CLI.
+"""Shadow-mode replay of the blind orchestrator-rater through GLM-5.2.
 
 Historical councils already have agent_scores recorded by the Claude orchestrator
 that called rate_council (rater='claude_blind'). This script re-applies the same
-anonymization (deterministic salt='blind:{council_id}'), asks grok-build to rate
+anonymization (deterministic salt='blind:{council_id}'), asks GLM-5.2 to rate
 the same letters on the same dimensions, then compares per-agent.
 
+GLM-5.2 is reached via Z.ai's Anthropic-compatible endpoint (see _glm_client.py).
+
 Output:
-  scripts/shadow_results/rater_replay.jsonl   — one line per council
-  scripts/shadow_results/rater_summary.md     — Spearman, top-1 agreement, etc.
+  scripts/shadow_results/rater_replay_glm.jsonl   — one line per council
+  scripts/shadow_results/rater_summary_glm.md     — Spearman, top-1 agreement, etc.
 
 Usage:
-  python scripts/shadow_grok_rater.py [--limit N] [--sleep 0.5]
+  OWLEX_GLM_TOKEN=<key> python scripts/shadow_glm_rater.py [--limit N] [--sleep 0.5]
 """
 from __future__ import annotations
 
@@ -25,13 +27,13 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _glm_client import GLM_MODEL, call_glm as _glm_call  # noqa: E402
+
 OWLEX_DB = Path(os.path.expanduser("~/.owlex/owlex.db"))
 RESULTS_DIR = Path(__file__).parent / "shadow_results"
-JSONL_PATH = RESULTS_DIR / "rater_replay.jsonl"
-SUMMARY_PATH = RESULTS_DIR / "rater_summary.md"
-
-GROK_MODEL = os.getenv("OWLEX_GROK_MODEL", "grok-build")
-GROK_TIMEOUT = int(os.getenv("OWLEX_GROK_TIMEOUT", "180"))
+JSONL_PATH = RESULTS_DIR / "rater_replay_glm.jsonl"
+SUMMARY_PATH = RESULTS_DIR / "rater_summary_glm.md"
 
 LABELS = "ABCDEFGHIJKLMNOP"
 COUNCIL_SYSTEM_PREFIX = "IMPORTANT: This is a council deliberation."
@@ -162,31 +164,16 @@ def build_prompt_and_mapping(council: dict) -> tuple[str | None, dict[str, str],
     return prompt, label_to_agent, question
 
 
-async def call_grok(prompt: str) -> tuple[str, str | None]:
-    proc = await asyncio.create_subprocess_exec(
-        "grok", "-p", prompt,
-        "--output-format", "json",
-        "--always-approve",
-        "--model", GROK_MODEL,
-        "--disable-web-search",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=GROK_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return "", f"timeout after {GROK_TIMEOUT}s"
-    if proc.returncode != 0:
-        return "", f"grok exit {proc.returncode}: {stderr.decode(errors='replace')[:200]}"
-    return stdout.decode(errors="replace").strip(), None
+async def call_glm(prompt: str) -> tuple[str, str | None]:
+    """Call GLM-5.2; wrap the reply in a {"text": ...} envelope so the existing
+    parser works unchanged."""
+    text, err = await _glm_call(prompt, max_tokens=2048)
+    if err:
+        return "", err
+    return json.dumps({"text": text}), None
 
 
-def parse_grok_ratings(raw: str, expected_letters: list[str]) -> tuple[dict[str, dict] | None, str | None]:
+def parse_glm_ratings(raw: str, expected_letters: list[str]) -> tuple[dict[str, dict] | None, str | None]:
     try:
         outer = json.loads(raw)
     except json.JSONDecodeError:
@@ -292,15 +279,15 @@ async def main():
             existing_by_agent = {r["agent"]: r for r in council["existing_ratings"]}
 
             t0 = time.time()
-            raw, err = await call_grok(prompt)
+            raw, err = await call_glm(prompt)
             elapsed = time.time() - t0
             if err:
-                print(f"[{i}/{len(councils)}] {cid} — grok error: {err} ({elapsed:.1f}s)")
+                print(f"[{i}/{len(councils)}] {cid} — glm error: {err} ({elapsed:.1f}s)")
                 rows.append({"council_id": cid, "error": err, "elapsed_s": elapsed})
                 f.write(json.dumps(rows[-1]) + "\n"); f.flush()
                 continue
 
-            ratings, parse_err = parse_grok_ratings(raw, list(label_to_agent.keys()))
+            ratings, parse_err = parse_glm_ratings(raw, list(label_to_agent.keys()))
             if not ratings:
                 print(f"[{i}/{len(councils)}] {cid} — parse fail ({elapsed:.1f}s)")
                 rows.append({"council_id": cid, "parse_error": parse_err, "elapsed_s": elapsed})
@@ -314,10 +301,10 @@ async def main():
                     continue
                 existing = existing_by_agent.get(agent)
                 try:
-                    grok_score = int(rating.get("score", 0))
+                    glm_score = int(rating.get("score", 0))
                 except (TypeError, ValueError):
-                    grok_score = 0
-                grok_dims = {k: rating.get(k) for k in ("groundedness", "helpfulness", "correctness")}
+                    glm_score = 0
+                glm_dims = {k: rating.get(k) for k in ("groundedness", "helpfulness", "correctness")}
                 existing_dims = {}
                 if existing and existing.get("dimensions"):
                     try:
@@ -327,9 +314,9 @@ async def main():
                 per_agent.append({
                     "letter": letter,
                     "agent": agent,
-                    "grok_score": grok_score,
-                    "grok_dims": grok_dims,
-                    "grok_reason": rating.get("reason", ""),
+                    "glm_score": glm_score,
+                    "glm_dims": glm_dims,
+                    "glm_reason": rating.get("reason", ""),
                     "existing_score": existing["score"] if existing else None,
                     "existing_dims": existing_dims,
                     "existing_reason": existing.get("reason") if existing else None,
@@ -366,9 +353,9 @@ def write_summary(rows: list[dict]):
             continue
         valid = [p for p in per_agent if p.get("existing_score") is not None]
         for p in valid:
-            pairs_score.append((p["existing_score"], p["grok_score"]))
+            pairs_score.append((p["existing_score"], p["glm_score"]))
             total_paired += 1
-            if p["existing_score"] != p["grok_score"]:
+            if p["existing_score"] != p["glm_score"]:
                 flips += 1
             for key, sink in (
                 ("groundedness", pairs_ground),
@@ -376,7 +363,7 @@ def write_summary(rows: list[dict]):
                 ("correctness", pairs_correct),
             ):
                 ev = p["existing_dims"].get(key) if p.get("existing_dims") else None
-                gv = p["grok_dims"].get(key) if p.get("grok_dims") else None
+                gv = p["glm_dims"].get(key) if p.get("glm_dims") else None
                 if isinstance(ev, (int, float)) and isinstance(gv, (int, float)):
                     sink.append((float(ev), float(gv)))
         if len(valid) >= 2:
@@ -386,12 +373,12 @@ def write_summary(rows: list[dict]):
                 (p["existing_dims"].get("correctness") or 0) if p.get("existing_dims") else 0,
                 (p["existing_dims"].get("helpfulness") or 0) if p.get("existing_dims") else 0,
             ))["agent"]
-            grok_winner = max(valid, key=lambda p: (
-                p["grok_score"],
-                (p["grok_dims"].get("correctness") or 0) if p.get("grok_dims") else 0,
-                (p["grok_dims"].get("helpfulness") or 0) if p.get("grok_dims") else 0,
+            glm_winner = max(valid, key=lambda p: (
+                p["glm_score"],
+                (p["glm_dims"].get("correctness") or 0) if p.get("glm_dims") else 0,
+                (p["glm_dims"].get("helpfulness") or 0) if p.get("glm_dims") else 0,
             ))["agent"]
-            if existing_winner == grok_winner:
+            if existing_winner == glm_winner:
                 top1_agreements += 1
 
     def corr(pairs):
@@ -404,9 +391,9 @@ def write_summary(rows: list[dict]):
     agree_pct = ((total_paired - flips) / total_paired * 100) if total_paired else 0
     top1_pct = (top1_agreements / top1_total * 100) if top1_total else 0
 
-    md = f"""# Blind-Rater Shadow Replay — grok-build vs existing claude_blind
+    md = f"""# Blind-Rater Shadow Replay — GLM-5.2 vs existing claude_blind
 
-**Model**: `{GROK_MODEL}` via Grok CLI
+**Model**: `{GLM_MODEL}` via Z.ai (Anthropic-compatible API)
 **Generated**: {time.strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Volume
@@ -441,11 +428,11 @@ def write_summary(rows: list[dict]):
 
 | Spearman ρ | Verdict |
 |---|---|
-| > 0.7 | Grok is a strong independent rater — high correlation with existing rater |
+| > 0.7 | GLM is a strong independent rater — high correlation with existing rater |
 | 0.4–0.7 | Moderate correlation — useful as a secondary signal, not replacement |
 | < 0.4 | Diverges — different judgment criteria, low ensemble value |
 
-Top-1 winner agreement >70% means Grok would pick the same "best" answer most of the time —
+Top-1 winner agreement >70% means GLM would pick the same "best" answer most of the time —
 useful as a sanity check on the existing rater.
 
 Note: the existing rater is Claude orchestrator (varies per session — different sessions used

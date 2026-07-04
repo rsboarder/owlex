@@ -163,12 +163,15 @@ def main():
                 pass
 
         engine.start_cleanup_loop()
-        # Start the long-lived derivation worker. It owns the queue Council
-        # and Engine emit into; on shutdown we drain it with a bounded timeout
-        # so pairwise/skills/position-deltas don't get silently lost when the
-        # MCP server stops mid-flight.
+        # Start both long-lived derivation workers:
+        #   - run_worker: fast lane for pairwise / position-delta / skills.
+        #   - run_glm_blind_worker: slow lane dedicated to GlmBlindEvent so a
+        #     GLM call (~120s) never delays fast-lane analytics.
+        # On shutdown we drain both with bounded timeouts so no events are
+        # silently lost when the MCP server stops mid-flight.
         from .. import derivations as _derivations
         derivation_worker = asyncio.create_task(_derivations.run_worker())
+        glm_blind_worker = asyncio.create_task(_derivations.run_glm_blind_worker())
 
         # Probe the agreement-judge model. External CLI catalogs (codex's
         # ChatGPT-account allowlist) rotate, and a stale pinned model name
@@ -187,6 +190,21 @@ def main():
             except Exception as _e:
                 log(f"[WARN] agreement health-check failed: {_e}")
         asyncio.create_task(_probe_agreement())
+
+        # Optional GLM-5.2 blind-rater probe — only when enabled.
+        # Non-blocking: logs [ok]/[WARN] but never blocks server startup.
+        from ..config import config as _config
+        if _config.glm_blind.enabled:
+            async def _probe_glm_blind():
+                try:
+                    from .. import glm_client as _glm_client
+                    ok, msg = await _glm_client.probe(timeout=30.0)
+                    tag = "[ok]" if ok else "[WARN]"
+                    log(f"{tag} glm_blind health-check: {msg}")
+                except Exception as _e:
+                    log(f"[WARN] glm_blind health-check failed: {_e}")
+            asyncio.create_task(_probe_glm_blind())
+
         try:
             server_task = asyncio.create_task(mcp.run_stdio_async())
             shutdown_task = asyncio.create_task(shutdown_event.wait())
@@ -217,6 +235,10 @@ def main():
                 await asyncio.wait_for(derivation_worker, timeout=5.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 derivation_worker.cancel()
+            try:
+                await asyncio.wait_for(glm_blind_worker, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                glm_blind_worker.cancel()
             log("Server shutdown complete.")
 
     asyncio.run(run_with_cleanup())
