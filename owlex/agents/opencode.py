@@ -1,16 +1,94 @@
 """
 OpenCode CLI agent runner.
+
+GLM-5.2 seat (opt-in): activate via COUNCIL_SUBSTITUTION_MODELS, e.g.:
+  COUNCIL_SUBSTITUTION_MODELS=aichat:opencode:zai/glm-5.2
+Requires ~/.owlex/glm_token. See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
 """
 
 import asyncio
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Callable
 
 from ..config import config
 from .base import AgentRunner, AgentCommand
+
+
+# --- GLM/Z.ai seat helpers --------------------------------------------------
+
+def _is_glm_model(model: str | None) -> bool:
+    """Return True when the resolved model targets Z.ai / GLM-5.2."""
+    if not model:
+        return False
+    lower = model.lower()
+    return "glm" in lower or "zai" in lower or lower.startswith("zai/")
+
+
+def _read_glm_token() -> str | None:
+    """Read the GLM API token from ~/.owlex/glm_token. Returns None on failure."""
+    token_path = Path.home() / ".owlex" / "glm_token"
+    try:
+        token = token_path.read_text().strip()
+        return token or None
+    except OSError:
+        return None
+
+
+def _build_glm_env_overrides(variant: str) -> dict[str, str]:
+    """Build env_overrides for a GLM/Z.ai opencode invocation.
+
+    - GLM_TOKEN: read from ~/.owlex/glm_token at call time (fail loudly if missing).
+    - XDG_DATA_HOME: fresh per-process tmpdir (avoids stale-DB crash in opencode 1.17.7).
+    - OPENCODE_CONFIG: inline Z.ai provider config pointing to api.z.ai.
+    """
+    overrides: dict[str, str] = {}
+
+    token = _read_glm_token()
+    if token:
+        overrides["GLM_TOKEN"] = token
+    # If token is missing we leave GLM_TOKEN unset — the subprocess will fail
+    # loudly (auth error) rather than the council startup crashing.
+
+    # Fresh XDG_DATA_HOME per call so opencode never re-uses a stale session DB.
+    xdg_dir = tempfile.mkdtemp(prefix="owlex_glm_xdg_")
+    overrides["XDG_DATA_HOME"] = xdg_dir
+
+    # Inline Z.ai provider config so opencode knows the endpoint + model.
+    cfg_dir = tempfile.mkdtemp(prefix="owlex_glm_cfg_")
+    cfg_path = os.path.join(cfg_dir, "opencode.json")
+    cfg = {
+        "permission": {"edit": "deny", "bash": "deny", "webfetch": "deny"},
+        "provider": {
+            "zai": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Z.ai (GLM Coding Plan)",
+                "options": {
+                    "baseURL": "https://api.z.ai/api/coding/paas/v4",
+                    "apiKey": "{env:GLM_TOKEN}",
+                },
+                "models": {
+                    "glm-5.2": {
+                        "name": "GLM-5.2 (Z.ai)",
+                        "reasoning": True,
+                        "limit": {"context": 204800, "output": 131072},
+                        "options": {
+                            "reasoning_effort": variant,
+                            "thinking": {"type": "enabled"},
+                        },
+                    }
+                },
+            }
+        },
+    }
+    with open(cfg_path, "w") as fh:
+        json.dump(cfg, fh)
+    overrides["OPENCODE_CONFIG"] = cfg_path
+
+    return overrides
 
 
 def _get_opencode_project_id(working_directory: str) -> str | None:
@@ -157,14 +235,42 @@ class OpenCodeRunner(AgentRunner):
         prompt: str,
         working_directory: str | None = None,
         enable_search: bool = False,  # OpenCode doesn't have web search flag
+        model_override: str | None = None,
         **kwargs,
     ) -> AgentCommand:
-        """Build command for running OpenCode with a prompt."""
+        """Build command for running OpenCode with a prompt.
+
+        When model_override resolves to a GLM/Z.ai model, injects the Z.ai
+        provider config and GLM_TOKEN env override instead of using --format json
+        (which hangs on this provider). See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
+        """
+        resolved_model = model_override or config.opencode.model
         full_command = ["opencode", "run"]
 
+        if _is_glm_model(resolved_model):
+            # GLM/Z.ai path: --model + --variant; no --format json (hangs on Z.ai).
+            variant = os.environ.get("OWLEX_GLM_OC_VARIANT", "high")
+            full_command.extend(["--model", resolved_model])
+            full_command.extend(["--variant", variant])
+            env_overrides = _build_glm_env_overrides(variant)
+            full_command.append("--")
+            full_command.append(prompt)
+            return AgentCommand(
+                command=full_command,
+                prompt="",
+                cwd=working_directory,
+                output_prefix="OpenCode Output",
+                not_found_hint="Please ensure OpenCode is installed (curl -fsSL https://opencode.ai/install | bash).",
+                stream=True,
+                env_overrides=env_overrides,
+                model=resolved_model,
+            )
+
+        # Standard opencode path (non-GLM models).
+
         # Model configuration (format: provider/model)
-        if config.opencode.model:
-            full_command.extend(["--model", config.opencode.model])
+        if resolved_model:
+            full_command.extend(["--model", resolved_model])
 
         # Agent selection (e.g., "build", "plan")
         if config.opencode.agent:
@@ -187,7 +293,7 @@ class OpenCodeRunner(AgentRunner):
             output_prefix="OpenCode Output",
             not_found_hint="Please ensure OpenCode is installed (curl -fsSL https://opencode.ai/install | bash).",
             stream=True,
-            model=config.opencode.model,
+            model=resolved_model,
         )
 
     def build_resume_command(
@@ -196,22 +302,31 @@ class OpenCodeRunner(AgentRunner):
         prompt: str,
         working_directory: str | None = None,
         enable_search: bool = False,
+        model_override: str | None = None,
         **kwargs,
     ) -> AgentCommand:
         """Build command for resuming an existing OpenCode session."""
+        resolved_model = model_override or config.opencode.model
         full_command = ["opencode", "run"]
 
         # Model configuration
-        if config.opencode.model:
-            full_command.extend(["--model", config.opencode.model])
+        if resolved_model:
+            full_command.extend(["--model", resolved_model])
 
-        # Agent selection
-        if config.opencode.agent:
-            full_command.extend(["--agent", config.opencode.agent])
+        env_overrides: dict[str, str] | None = None
+        if _is_glm_model(resolved_model):
+            # GLM/Z.ai resume: inject provider env, no --format json.
+            variant = os.environ.get("OWLEX_GLM_OC_VARIANT", "high")
+            full_command.extend(["--variant", variant])
+            env_overrides = _build_glm_env_overrides(variant)
+        else:
+            # Agent selection (non-GLM only; GLM config sets this via OPENCODE_CONFIG)
+            if config.opencode.agent:
+                full_command.extend(["--agent", config.opencode.agent])
 
-        # Output format
-        if config.opencode.json_output:
-            full_command.extend(["--format", "json"])
+            # Output format
+            if config.opencode.json_output:
+                full_command.extend(["--format", "json"])
 
         # Session resume
         if session_ref == "--continue" or session_ref == "latest":
@@ -234,7 +349,8 @@ class OpenCodeRunner(AgentRunner):
             output_prefix="OpenCode Resume Output",
             not_found_hint="Please ensure OpenCode is installed (curl -fsSL https://opencode.ai/install | bash).",
             stream=False,  # Resume uses non-streaming mode
-            model=config.opencode.model,
+            env_overrides=env_overrides,
+            model=resolved_model,
         )
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:

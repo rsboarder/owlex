@@ -233,6 +233,19 @@ class Council:
         r1_contents = self._collect_r1_contents(round_1)
 
         deliberate, agreement_score, agreement_reason = await self._resolve_deliberation(deliberate, prompt, r1_contents)
+
+        # GLM-5.2 escalation: invoke once on disagreement when flag is on.
+        # Runs before R2 so latency is additive, not multiplied — caller accepted
+        # this trade-off (disagreement path only, flag off by default).
+        # See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md (TASK-20).
+        glm_escalation_response = None
+        if deliberate and config.glm_escalation.enabled:
+            glm_escalation_response = await self._invoke_glm_escalation(
+                prompt=prompt,
+                working_directory=working_directory,
+                timeout=config.glm_escalation.timeout,
+            )
+
         round_2 = await self._do_round_2_if_needed(deliberate, prompt, working_directory, round_1, claude_opinion, critique, effective_timeout, participants)
 
         # Off the user-facing critical path: emit derivation events to the
@@ -247,6 +260,15 @@ class Council:
             _derivations.emit(_derivations.PositionDeltaEvent(
                 round_1=round_1, round_2=round_2,
             ))
+        # Optional background GLM-5.2 blind-rater. Off by default (zero latency
+        # impact when disabled). Enable via OWLEX_GLM_BLIND_ENABLED=1 + token.
+        # See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
+        if config.glm_blind.enabled:
+            _derivations.emit(_derivations.GlmBlindEvent(
+                council_id=self.council_id,
+                question=prompt,
+                r1_contents=r1_contents,
+            ))
 
         return self._build_outcome(
             prompt=prompt, working_directory=working_directory,
@@ -254,6 +276,7 @@ class Council:
             council_start=council_start, deliberate=deliberate, critique=critique,
             agreement_score=agreement_score, agreement_reason=agreement_reason,
             claude_opinion=claude_opinion,
+            glm_escalation_response=glm_escalation_response,
         )
 
     # === deliberate() helpers ===
@@ -341,10 +364,58 @@ class Council:
         except Exception as e:
             self.log(f"position-delta computation failed: {e}")
 
+    async def _invoke_glm_escalation(
+        self,
+        prompt: str,
+        working_directory: str | None,
+        timeout: int,
+    ) -> "AgentResponse | None":
+        """Invoke GLM-5.2 once as a tie-breaker opinion on R1 disagreement.
+
+        Uses AGENT_RUNNERS[Agent.OPENCODE] with model_override=config.glm_escalation.model
+        so the opencode-GLM runner handles Z.ai auth / XDG isolation / --variant.
+        See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md (TASK-20).
+
+        Intentionally wrapped in try/except: a GLM failure must never break the
+        council. On failure, None is returned and glm_escalation_response stays None.
+
+        TODO (TASK-20 follow-up): GLM escalation opinion is attached to the
+        outcome but intentionally NOT injected into R2 prompts here — R2 prompt
+        injection risks token bloat and anonymization-invariant breakage; defer
+        to a future task.
+        """
+        try:
+            self.log("GLM escalation: invoking GLM-5.2 tie-breaker (R1 disagreement detected)")
+            await self.notify("GLM escalation: querying GLM-5.2 for additional opinion")
+            task = self._engine.create_task(
+                command="council_glm_escalation",
+                args={"prompt": prompt, "working_directory": working_directory},
+                context=self.context,
+                council_id=self.council_id,
+            )
+            await self._engine.run_agent(
+                task,
+                AGENT_RUNNERS[Agent.OPENCODE],
+                mode="exec",
+                prompt=prompt,
+                working_directory=working_directory,
+                model_override=config.glm_escalation.model,
+                timeout=timeout,
+            )
+            status = "completed" if task.status == "completed" else "failed"
+            self.log(f"GLM escalation {status}")
+            if task.status != "completed":
+                return None
+            return build_agent_response(task, Agent.OPENCODE)
+        except Exception as exc:
+            self.log(f"GLM escalation failed (non-fatal): {exc}")
+            return None
+
     def _build_outcome(
         self, *, prompt, working_directory, round_1, round_2, participants,
         council_start, deliberate, critique,
         agreement_score, agreement_reason, claude_opinion,
+        glm_escalation_response=None,
     ) -> CouncilResponse:
         claude_opinion_obj = (
             ClaudeOpinion(content=claude_opinion.strip(), provided_at=council_start.isoformat())
@@ -389,6 +460,7 @@ class Council:
                 timing=timing,
                 slowest_agent=slowest,
             ),
+            glm_escalation_response=glm_escalation_response,
         )
 
     # === Helper methods ===
