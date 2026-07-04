@@ -1,0 +1,130 @@
+### JUDGE(max) start Wed Jun 17 20:49:22 +04 2026
+[init] loading up to 80 councils from /Users/rsboarder/.owlex/owlex.db
+[init] loaded 80 councils (67 with >=2 R1 responses)
+[1/80] 195002 — orig=4.0 glm=4.0 (12.2s)
+[2/80] 162255 — orig=4.0 glm=5.0 (7.4s)
+[3/80] 143342 — orig=4.0 glm=5.0 (15.2s)
+[4/80] 221858 — orig=4.0 glm=3.0 (28.9s)
+[5/80] 235145 — orig=4.0 glm=4.0 (21.7s)
+[6/80] 231438 — orig=2.0 glm=2.0 (22.5s)
+[7/80] 210711 — orig=None glm=4.0 (7.2s)
+[8/80] 192846 — orig=None glm=5.0 (26.8s)
+[9/80] 161139 — orig=3.0 glm=3.0 (13.6s)
+[10/80] 144014 — orig=3.0 glm=5.0 (6.4s)
+[11/80] 114332 — orig=4.0 glm=4.0 (6.7s)
+[12/80] 224913 — orig=4.0 glm=5.0 (9.0s)
+[13/80] 005936 — orig=4.0 glm=4.0 (6.0s)
+[14/80] 233423 — orig=3.0 glm=4.0 (15.4s)
+[15/80] 124243 — orig=5.0 glm=5.0 (6.8s)
+[16/80] 222144 — skip (only 0 R1)
+[17/80] 171935 — skip (only 0 R1)
+[18/80] 231807 — skip (only 0 R1)
+[19/80] 001551 — skip (only 0 R1)
+[20/80] 191649 — skip (only 0 R1)
+[21/80] 151313 — skip (only 0 R1)
+[22/80] 133523 — skip (only 0 R1)
+[23/80] 004615 — skip (only 0 R1)
+[24/80] 010109 — skip (only 0 R1)
+[25/80] 001318 — skip (only 0 R1)
+[26/80] 203406 — skip (only 0 R1)
+[27/80] 171135 — skip (only 0 R1)
+[28/80] 010006 — orig=4.0 glm=4.0 (11.1s)
+[29/80] 230502 — orig=4.0 glm=4.0 (10.2s)
+[30/80] 232043 — orig=4.0 glm=4.0 (7.6s)
+[31/80] 191908 — orig=4.0 glm=5.0 (5.9s)
+[32/80] 190956 — orig=5.0 glm=5.0 (6.5s)
+[33/80] 184306 — orig=4.0 glm=5.0 (5.1s)
+[34/80] 214308 — orig=5.0 glm=5.0 (5.3s)
+[35/80] 212917 — skip (only 1 R1)
+[36/80] 223934 — orig=None glm=4.0 (5.3s)
+[37/80] 002741 — orig=4.0 glm=4.0 (17.2s)
+[38/80] 001104 — orig=4.0 glm=4.0 (9.4s)
+[39/80] 234424 — orig=4.0 glm=5.0 (21.1s)
+[40/80] 223021 — orig=4.0 glm=4.0 (21.5s)
+[41/80] 175124 — orig=4.0 glm=4.0 (18.6s)
+[42/80] 000719 — orig=4.0 glm=5.0 (13.3s)
+[43/80] 211549 — orig=4.0 glm=5.0 (5.3s)
+[44/80] 102358 — orig=3.0 glm=4.0 (34.2s)
+[45/80] 014015 — orig=4.0 glm=4.0 (10.0s)
+[46/80] 001535 — orig=4.0 glm=3.0 (7.0s)
+[47/80] 213149 — orig=4.0 glm=5.0 (13.9s)
+[48/80] 204512 — orig=3.0 glm=4.0 (8.9s)
+[49/80] 170726 — orig=4.0 glm=5.0 (15.2s)
+[50/80] 002039 — orig=1.8 glm=4.0 (13.0s)
+[51/80] 210707 — orig=1.5 glm=4.0 (7.2s)
+[52/80] 123537 — orig=1.7 glm=4.0 (27.7s)
+[53/80] 232853 — orig=2.0 glm=4.0 (13.5s)
+[54/80] 231120 — orig=2.0 glm=4.0 (12.5s)
+[55/80] 000433 — orig=1.6 glm=3.0 (14.4s)
+[56/80] 203956 — orig=1.6 glm=3.0 (12.0s)
+[57/80] 142606 — orig=3.0 glm=3.0 (22.3s)
+[58/80] 235643 — orig=3.0 glm=4.0 (33.8s)
+[59/80] 195619 — orig=5.0 glm=4.0 (20.0s)
+[60/80] 192255 — orig=1.8 glm=4.0 (6.5s)
+[61/80] 180448 — orig=5.0 glm=4.0 (8.9s)
+[62/80] 172746 — orig=4.0 glm=4.0 (19.8s)
+[63/80] 163400 — orig=4.0 glm=5.0 (28.0s)
+[64/80] 154922 — orig=1.8 glm=4.0 (18.1s)
+[65/80] 150856 — orig=1.8 glm=4.0 (10.5s)
+[66/80] 153246 — orig=2.0 glm=4.0 (15.5s)
+[67/80] 133412 — orig=4.0 glm=3.0 (10.7s)
+[68/80] 234052 — orig=2.0 glm=4.0 (11.1s)
+[69/80] 135052 — orig=5.0 glm=4.0 (10.3s)
+[70/80] 001610 — orig=3.0 glm=2.0 (23.8s)
+[71/80] 224010 — orig=2.0 glm=3.0 (18.7s)
+[72/80] 235519 — orig=1.5 glm=3.0 (31.9s)
+[73/80] 234250 — orig=4.0 glm=5.0 (8.2s)
+[74/80] 184323 — orig=5.0 glm=5.0 (9.7s)
+[75/80] 231752 — orig=5.0 glm=5.0 (5.3s)
+[76/80] 232030 — orig=3.0 glm=3.0 (11.5s)
+[77/80] 205729 — orig=3.0 glm=4.0 (17.8s)
+[78/80] 133206 — orig=5.0 glm=4.0 (5.7s)
+[79/80] 130146 — orig=3.0 glm=4.0 (18.0s)
+[80/80] 123143 — orig=5.0 glm=4.0 (15.1s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/agreement_replay_glm.jsonl
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/agreement_summary_glm.md
+### RATER(max) start Wed Jun 17 21:05:38 +04 2026
+### RATER(max) RESUME Wed Jun 17 21:31:32 +04 2026
+[resume] 42 councils already processed in rater_replay_glm.jsonl
+[init] loading up to 60 councils with blind ratings
+[init] 18 councils remaining to process
+[1/18] 222144 — skip (insufficient R1)
+[2/18] 171935 — skip (insufficient R1)
+[3/18] 231807 — skip (insufficient R1)
+[4/18] 001551 — skip (insufficient R1)
+[5/18] 191649 — skip (insufficient R1)
+[6/18] 151313 — skip (insufficient R1)
+[7/18] 133523 — skip (insufficient R1)
+[8/18] 004615 — skip (insufficient R1)
+[9/18] 010109 — skip (insufficient R1)
+[10/18] 001318 — skip (insufficient R1)
+[11/18] 203406 — skip (insufficient R1)
+[12/18] 171135 — skip (insufficient R1)
+[13/18] 212917 — skip (insufficient R1)
+[14/18] 142606 — rated 3 agents (31.8s)
+[15/18] 235643 — rated 3 agents (48.1s)
+[16/18] 195619 — rated 3 agents (28.2s)
+[17/18] 192255 — rated 2 agents (15.3s)
+[18/18] 180448 — rated 2 agents (26.8s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/rater_replay_glm.jsonl
+Traceback (most recent call last):
+  File "/Users/rsboarder/workspace/owlex/scripts/shadow_glm_rater.py", line 445, in <module>
+    asyncio.run(main())
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/workspace/owlex/scripts/shadow_glm_rater.py", line 336, in main
+    write_summary(rows)
+  File "/Users/rsboarder/workspace/owlex/scripts/shadow_glm_rater.py", line 376, in write_summary
+    glm_winner = max(valid, key=lambda p: (
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: '>' not supported between instances of 'NoneType' and 'int'
+### RATER(max) DONE Wed Jun 17 21:34:05 +04 2026

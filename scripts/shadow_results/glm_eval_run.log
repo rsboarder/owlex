@@ -1,0 +1,113 @@
+### JUDGE start Wed Jun 17 20:04:25 +04 2026
+[init] loading up to 60 councils from /Users/rsboarder/.owlex/owlex.db
+[init] loaded 60 councils (47 with >=2 R1 responses)
+[1/60] 195002 — orig=4.0 glm=4.0 (31.8s)
+[2/60] 162255 — orig=4.0 glm=5.0 (4.0s)
+[3/60] 143342 — orig=4.0 glm=5.0 (5.0s)
+[4/60] 221858 — orig=4.0 glm=5.0 (5.3s)
+[5/60] 235145 — orig=4.0 glm=4.0 (4.4s)
+[6/60] 231438 — orig=2.0 glm=2.0 (3.5s)
+Traceback (most recent call last):
+  File "/Users/rsboarder/workspace/owlex/scripts/shadow_glm_judge.py", line 362, in <module>
+    asyncio.run(main())
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/.pyenv/versions/3.11.7/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/rsboarder/workspace/owlex/scripts/shadow_glm_judge.py", line 270, in main
+    tag = f"orig={council['agreement_score']:.1f} glm={glm_score}" if glm_score else f"orig={council['agreement_score']:.1f} glm=ERR"
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported format string passed to NoneType.__format__
+### RATER start Wed Jun 17 20:05:28 +04 2026
+[init] loading up to 60 councils with blind ratings
+[init] 60 councils remaining to process
+[1/60] 195002 — rated 3 agents (12.6s)
+[2/60] 162255 — rated 3 agents (8.3s)
+[3/60] 143342 — rated 3 agents (6.6s)
+[4/60] 221858 — rated 3 agents (9.4s)
+[5/60] 235145 — rated 3 agents (7.8s)
+[6/60] 231438 — rated 3 agents (9.2s)
+[7/60] 210711 — rated 3 agents (8.0s)
+[8/60] 192846 — rated 3 agents (6.1s)
+[9/60] 161139 — rated 3 agents (6.1s)
+[10/60] 144014 — rated 3 agents (8.2s)
+[11/60] 114332 — parse fail (12.7s)
+[12/60] 224913 — rated 3 agents (7.2s)
+[13/60] 005936 — rated 3 agents (8.7s)
+[14/60] 233423 — rated 3 agents (6.8s)
+[15/60] 124243 — rated 3 agents (9.9s)
+[16/60] 222144 — skip (insufficient R1)
+[17/60] 171935 — skip (insufficient R1)
+[18/60] 231807 — skip (insufficient R1)
+[19/60] 001551 — skip (insufficient R1)
+[20/60] 191649 — skip (insufficient R1)
+[21/60] 151313 — skip (insufficient R1)
+[22/60] 133523 — skip (insufficient R1)
+[23/60] 004615 — skip (insufficient R1)
+[24/60] 010109 — skip (insufficient R1)
+[25/60] 001318 — skip (insufficient R1)
+[26/60] 203406 — skip (insufficient R1)
+[27/60] 171135 — skip (insufficient R1)
+[28/60] 010006 — rated 3 agents (8.8s)
+[29/60] 230502 — rated 3 agents (9.8s)
+[30/60] 232043 — rated 3 agents (16.5s)
+[31/60] 191908 — rated 3 agents (9.1s)
+[32/60] 190956 — rated 3 agents (6.6s)
+[33/60] 184306 — rated 3 agents (10.2s)
+[34/60] 214308 — rated 3 agents (7.5s)
+[35/60] 212917 — skip (insufficient R1)
+[36/60] 002741 — rated 3 agents (8.5s)
+[37/60] 001104 — rated 3 agents (8.4s)
+[38/60] 234424 — rated 3 agents (10.8s)
+[39/60] 223021 — rated 3 agents (7.5s)
+[40/60] 175124 — rated 3 agents (21.3s)
+[41/60] 000719 — rated 3 agents (20.0s)
+[42/60] 211549 — rated 3 agents (6.2s)
+[43/60] 102358 — rated 3 agents (7.9s)
+[44/60] 014015 — rated 3 agents (8.4s)
+[45/60] 001535 — rated 3 agents (9.4s)
+[46/60] 213149 — rated 3 agents (8.4s)
+[47/60] 204512 — rated 2 agents (6.2s)
+[48/60] 170726 — rated 2 agents (6.7s)
+[49/60] 002039 — rated 3 agents (8.4s)
+[50/60] 210707 — rated 2 agents (6.1s)
+[51/60] 123537 — rated 3 agents (24.1s)
+[52/60] 232853 — rated 3 agents (7.5s)
+[53/60] 231120 — rated 3 agents (7.0s)
+[54/60] 000433 — rated 3 agents (13.7s)
+[55/60] 203956 — rated 3 agents (10.6s)
+[56/60] 142606 — rated 3 agents (6.5s)
+[57/60] 235643 — rated 3 agents (6.7s)
+[58/60] 195619 — rated 3 agents (5.9s)
+[59/60] 192255 — rated 2 agents (6.7s)
+[60/60] 180448 — rated 2 agents (6.3s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/rater_replay_glm.jsonl
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/rater_summary_glm.md
+### SEAT start Wed Jun 17 20:13:07 +04 2026
+[init] loading up to 15 councils with blind ratings + >=3 seats
+[init] 15 councils remaining (effort=default, model=glm-5.2)
+[1/15] 195002 — len=7486 cb=5 fr=6 (46.1s)
+[2/15] 162255 — len=6246 cb=0 fr=0 (80.2s)
+[3/15] 143342 — len=6957 cb=1 fr=0 (51.6s)
+[4/15] 221858 — len=6761 cb=1 fr=2 (49.9s)
+[5/15] 235145 — len=8476 cb=0 fr=4 (90.1s)
+[6/15] 231438 — len=4090 cb=0 fr=5 (33.3s)
+[7/15] 210711 — len=7102 cb=0 fr=0 (47.5s)
+[8/15] 192846 — len=7117 cb=0 fr=7 (47.1s)
+[9/15] 161139 — len=5957 cb=1 fr=3 (38.2s)
+[10/15] 144014 — len=5501 cb=2 fr=2 (43.3s)
+[11/15] 114332 — len=5098 cb=0 fr=0 (39.7s)
+[12/15] 224913 — len=6579 cb=0 fr=0 (55.9s)
+[13/15] 005936 — len=5815 cb=0 fr=3 (35.3s)
+[14/15] 233423 — len=3860 cb=0 fr=2 (24.4s)
+[15/15] 124243 — len=5580 cb=0 fr=0 (50.3s)
+
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_r1_responses_glm.jsonl
+[done] wrote /Users/rsboarder/workspace/owlex/scripts/shadow_results/seat_r1_metrics_glm.md
+### ALL DONE Wed Jun 17 20:25:27 +04 2026
