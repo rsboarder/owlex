@@ -133,6 +133,22 @@ class Council:
             else:
                 unavailable.append(seat)
 
+        sub_overrides = config.council.substitution_models or {}
+
+        # An explicit override that names a runner (seat:runner:model) forces
+        # substitution even when the seat's own CLI is installed. Otherwise an
+        # installed-but-broken binary (e.g. an auth-dead gemini that exits on
+        # IneligibleTierError) stays in `available`, runs natively, and the
+        # override is silently ignored — the seat then fails every council
+        # despite a valid COUNCIL_SUBSTITUTION_MODELS entry. Short-form overrides
+        # (seat:model, runner=None) do NOT force here; they only retarget an
+        # already-unavailable seat's donor/model.
+        forced = [
+            seat for seat in available
+            if (ov := sub_overrides.get(seat)) and len(ov) == 2 and ov[0] is not None
+        ]
+        forced_set = set(forced)
+
         # Build donor pool: only configured donors that are actually available
         donor_pool = [s for s in config.council.substitution_donors if s in available]
         if not donor_pool and available:
@@ -140,8 +156,10 @@ class Council:
 
         participants = []
 
-        # Native seats
+        # Native seats — available and not force-substituted by an explicit override
         for seat in available:
+            if seat in forced_set:
+                continue
             participants.append(Participant(
                 seat=seat,
                 runner=AGENT_RUNNERS[Agent(seat)],
@@ -149,11 +167,13 @@ class Council:
                 role=resolved_roles[seat],
             ))
 
-        # Substituted seats — use override config if set, else round-robin donors
-        sub_overrides = config.council.substitution_models or {}
-        if unavailable:
+        # Substituted seats — forced overrides first, then unavailable seats.
+        # Use the override config if set, else round-robin donors.
+        to_substitute = forced + unavailable
+        if to_substitute:
             subs = []
-            for i, seat in enumerate(unavailable):
+            rr = 0  # round-robin index, advanced only for donor-less overrides
+            for seat in to_substitute:
                 override = sub_overrides.get(seat)
                 if override and len(override) == 2:
                     runner_name, model = override
@@ -175,7 +195,8 @@ class Council:
                     if not donor_pool:
                         self.log(f"No donors available for {seat}, skipping")
                         continue
-                    donor = donor_pool[i % len(donor_pool)]
+                    donor = donor_pool[rr % len(donor_pool)]
+                    rr += 1
                     participants.append(Participant(
                         seat=seat,
                         runner=AGENT_RUNNERS[Agent(donor)],
@@ -185,7 +206,7 @@ class Council:
                     ))
                     subs.append(f"{seat}->{donor}")
             if subs:
-                self.log(f"Substituting unavailable agents: {', '.join(subs)}")
+                self.log(f"Substituting agents: {', '.join(subs)}")
 
         return participants
 

@@ -291,3 +291,55 @@ class TestCouncilConfig:
             )
 
             assert search_setting is False
+
+
+class TestBuildParticipantsSubstitutionOverride:
+    """COUNCIL_SUBSTITUTION_MODELS with an explicit runner must force substitution
+    even when the seat's own CLI is installed.
+
+    Regression: an auth-dead-but-installed gemini binary stayed in ``available``,
+    ran natively (exiting on IneligibleTierError), and the
+    ``gemini:opencode:zai/glm-5.2`` override was silently ignored — the seat
+    failed every council despite a valid config entry.
+    """
+
+    @staticmethod
+    def _resolve(substitution_models):
+        import dataclasses
+        from contextlib import ExitStack
+        from owlex.engine import AGENT_RUNNERS
+        from owlex.config import config as real_config
+
+        new_council = dataclasses.replace(
+            real_config.council,
+            substitution_models=substitution_models,
+            exclude_agents=frozenset(),
+        )
+        fake_cfg = dataclasses.replace(real_config, council=new_council)
+
+        with ExitStack() as stack:
+            # Make every native CLI appear installed + configured.
+            stack.enter_context(patch("owlex.council.shutil.which", return_value="/usr/bin/fake"))
+            for runner in AGENT_RUNNERS.values():
+                stack.enter_context(patch.object(
+                    type(runner), "is_configured",
+                    new_callable=lambda: property(lambda self: True),
+                ))
+            stack.enter_context(patch("owlex.council.config", fake_cfg))
+            parts = Council().build_participants()
+        return {p.seat: p for p in parts}
+
+    def test_explicit_runner_override_forces_substitution_for_available_seat(self):
+        by_seat = self._resolve({"gemini": ("opencode", "zai/glm-5.2")})
+        gem = by_seat["gemini"]
+        assert gem.is_substituted is True
+        assert gem.donor == "opencode"
+        assert gem.model_override == "zai/glm-5.2"
+        assert gem.runner.name == "opencode"
+        # The donor's own seat is untouched (stays native).
+        assert by_seat["opencode"].is_substituted is False
+
+    def test_available_seat_without_override_stays_native(self):
+        by_seat = self._resolve(None)
+        assert by_seat["gemini"].is_substituted is False
+        assert by_seat["gemini"].model_override is None
