@@ -343,3 +343,18 @@ class TestBuildParticipantsSubstitutionOverride:
         by_seat = self._resolve(None)
         assert by_seat["gemini"].is_substituted is False
         assert by_seat["gemini"].model_override is None
+
+    def test_non_seat_runner_override_selects_that_runner(self):
+        """A named runner that isn't itself an ALL_SEATS member (e.g. grok) must
+        still be selected as the donor — not silently rerouted to donor_pool[0].
+
+        Regression: the donor gate only accepted runner_name if it was ALSO an
+        available *seat*; grok is a registered AGENT_RUNNERS entry but not a
+        seat, so it always fell through to the default donor (codex), and the
+        model override (grok-4.5) got handed to codex instead of grok.
+        """
+        by_seat = self._resolve({"aichat": ("grok", "grok-4.5")})
+        p = by_seat["aichat"]
+        assert p.runner.name == "grok"
+        assert p.model_override == "grok-4.5"
+        assert p.runner.output_prefix == "Grok Output"

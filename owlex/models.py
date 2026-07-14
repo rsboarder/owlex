@@ -40,6 +40,7 @@ class Agent(str, Enum):
     CLAUDEOR = "claudeor"  # Claude Code via OpenRouter
     AICHAT = "aichat"  # aichat multi-provider CLI
     CURSOR = "cursor"  # Cursor Agent CLI
+    GROK = "grok"  # Grok CLI (xAI)
 
 
 @dataclass

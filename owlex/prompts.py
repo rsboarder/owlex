@@ -121,6 +121,7 @@ def build_deliberation_prompt(
     claudeor_answer: str | None = None,
     aichat_answer: str | None = None,
     cursor_answer: str | None = None,
+    grok_answer: str | None = None,
     claude_answer: str | None = None,
     critique: bool = False,
     include_original: bool = False,
@@ -160,6 +161,7 @@ def build_deliberation_prompt(
         ("claudeor", claudeor_answer),
         ("aichat", aichat_answer),
         ("cursor", cursor_answer),
+        ("grok", grok_answer),
     ):
         if answer:
             pairs.append((seat, answer))
@@ -203,6 +205,7 @@ def build_deliberation_prompt_with_role(
     claudeor_answer: str | None = None,
     aichat_answer: str | None = None,
     cursor_answer: str | None = None,
+    grok_answer: str | None = None,
     claude_answer: str | None = None,
     critique: bool = False,
     include_original: bool = False,
@@ -220,6 +223,7 @@ def build_deliberation_prompt_with_role(
         gemini_answer: Gemini's round 1 answer
         opencode_answer: OpenCode's round 1 answer
         claudeor_answer: ClaudeOR's round 1 answer
+        grok_answer: Grok's round 1 answer
         claude_answer: Optional Claude opinion
         critique: If True, use critique mode prompts
         include_original: If True, include original_prompt (for exec fallback)
@@ -236,6 +240,7 @@ def build_deliberation_prompt_with_role(
         claudeor_answer=claudeor_answer,
         aichat_answer=aichat_answer,
         cursor_answer=cursor_answer,
+        grok_answer=grok_answer,
         claude_answer=claude_answer,
         critique=critique,
         include_original=include_original,

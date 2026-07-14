@@ -10,5 +10,6 @@ from .opencode import OpenCodeRunner
 from .claudeor import ClaudeORRunner
 from .aichat import AiChatRunner
 from .cursor import CursorRunner
+from .grok import GrokRunner
 
-__all__ = ["AgentRunner", "CodexRunner", "GeminiRunner", "OpenCodeRunner", "ClaudeORRunner", "AiChatRunner", "CursorRunner"]
+__all__ = ["AgentRunner", "CodexRunner", "GeminiRunner", "OpenCodeRunner", "ClaudeORRunner", "AiChatRunner", "CursorRunner", "GrokRunner"]

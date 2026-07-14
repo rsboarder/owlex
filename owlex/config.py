@@ -124,6 +124,19 @@ class CursorConfig:
 
 
 @dataclass(frozen=True)
+class GrokConfig:
+    """Configuration for Grok CLI (xAI) integration.
+
+    No per-runner timeout field: council/engine already thread a call-level
+    timeout through to every subprocess (see run_agent's ``timeout`` kwarg),
+    so a second, unread knob here would just be dead config.
+    """
+    model: str = "grok-4.5"  # OWLEX_GROK_MODEL
+    effort: str = "low"  # OWLEX_GROK_EFFORT (reasoning effort)
+    clean_output: bool = True
+
+
+@dataclass(frozen=True)
 class GlmBlindConfig:
     """Configuration for the optional GLM-5.2 background blind-rater.
 
@@ -180,6 +193,7 @@ class OwlexConfig:
     claudeor: ClaudeORConfig
     aichat: AiChatConfig
     cursor: CursorConfig
+    grok: GrokConfig
     council: CouncilConfig
     glm_blind: GlmBlindConfig
     glm_escalation: GlmEscalationConfig
@@ -201,7 +215,7 @@ class OwlexConfig:
 # Known runner identifiers (matches owlex.agents Agent enum). Used to
 # validate seat:runner:model entries up front instead of letting them
 # silently 600s-timeout when the runner doesn't recognize the model.
-_KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"})
+_KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor", "grok"})
 
 
 def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
@@ -284,6 +298,12 @@ def load_config() -> OwlexConfig:
         clean_output=_get_bool("CURSOR_CLEAN_OUTPUT", True),
     )
 
+    grok = GrokConfig(
+        model=os.environ.get("OWLEX_GROK_MODEL", "grok-4.5"),
+        effort=os.environ.get("OWLEX_GROK_EFFORT", "low"),
+        clean_output=_get_bool("OWLEX_GROK_CLEAN_OUTPUT", True),
+    )
+
     council = CouncilConfig(
         exclude_agents=frozenset(_get_csv("COUNCIL_EXCLUDE_AGENTS")),
         default_team=_get_str_or_none("COUNCIL_DEFAULT_TEAM"),
@@ -312,6 +332,7 @@ def load_config() -> OwlexConfig:
         claudeor=claudeor,
         aichat=aichat,
         cursor=cursor,
+        grok=grok,
         council=council,
         glm_blind=glm_blind,
         glm_escalation=glm_escalation,
