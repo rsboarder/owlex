@@ -16,7 +16,7 @@ from typing import Any
 
 from .config import config
 from .models import Task, TaskStatus, AgentResponse, Agent
-from .agents import CodexRunner, GeminiRunner, OpenCodeRunner, ClaudeORRunner, AiChatRunner, CursorRunner
+from .agents import CodexRunner, GeminiRunner, OpenCodeRunner, ClaudeORRunner, AiChatRunner, CursorRunner, GrokRunner
 from .agents.base import AgentRunner, AgentCommand
 from . import store
 
@@ -56,6 +56,7 @@ def build_agent_response(
             Agent.CLAUDEOR.value: "Claude (OpenRouter) Output:\n\n",
             Agent.AICHAT.value: "AiChat Output:\n\n",
             Agent.CURSOR.value: "Cursor Output:\n\n",
+            Agent.GROK.value: "Grok Output:\n\n",
         }
         prefix = prefix_map.get(agent_name, "")
 
@@ -83,6 +84,7 @@ opencode_runner = OpenCodeRunner()
 claudeor_runner = ClaudeORRunner()
 aichat_runner = AiChatRunner()
 cursor_runner = CursorRunner()
+grok_runner = GrokRunner()
 
 # Map Agent enum to runner instances
 AGENT_RUNNERS: dict[Agent, AgentRunner] = {
@@ -92,6 +94,7 @@ AGENT_RUNNERS: dict[Agent, AgentRunner] = {
     Agent.CLAUDEOR: claudeor_runner,
     Agent.AICHAT: aichat_runner,
     Agent.CURSOR: cursor_runner,
+    Agent.GROK: grok_runner,
 }
 
 

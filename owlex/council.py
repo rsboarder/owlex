@@ -177,8 +177,28 @@ class Council:
                 override = sub_overrides.get(seat)
                 if override and len(override) == 2:
                     runner_name, model = override
-                    # Use specified runner, or fall back to first donor
-                    donor = runner_name if runner_name and runner_name in available else (donor_pool[0] if donor_pool else None)
+                    # Resolve the named runner: an available seat's own runner,
+                    # or an installed non-seat runner (e.g. grok — a registered
+                    # AGENT_RUNNERS entry that isn't itself an ALL_SEATS member).
+                    # Only fall back to the default donor pool when no runner
+                    # was named at all (seat:model short form); an explicitly
+                    # named runner that's neither wins skips the seat instead
+                    # of silently rerouting its model onto an unrelated donor
+                    # (codex) — the exact failure _KNOWN_RUNNERS validation
+                    # exists to prevent.
+                    if runner_name and runner_name in available:
+                        donor = runner_name
+                    elif (
+                        runner_name
+                        and runner_name in {a.value for a in Agent}
+                        and shutil.which(AGENT_RUNNERS[Agent(runner_name)].cli_command)
+                    ):
+                        donor = runner_name
+                    elif runner_name:
+                        self.log(f"Runner '{runner_name}' for {seat} is not available/installed, skipping")
+                        continue
+                    else:
+                        donor = donor_pool[0] if donor_pool else None
                     if not donor:
                         self.log(f"No donors available for {seat}, skipping")
                         continue

@@ -50,7 +50,7 @@ def load_councils(limit: int) -> list[dict]:
             ORDER BY co.completed_at DESC
             LIMIT ?
             """,
-            (limit * 2,),
+            (1000,),
         )
         cids = [r["council_id"] for r in cur.fetchall()]
 

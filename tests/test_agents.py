@@ -9,6 +9,7 @@ from owlex.agents.codex import CodexRunner
 from owlex.agents.gemini import GeminiRunner
 from owlex.agents.opencode import OpenCodeRunner
 from owlex.agents.aichat import AiChatRunner
+from owlex.agents.grok import GrokRunner
 
 
 class TestCodexRunner:
@@ -619,6 +620,118 @@ class TestAiChatRunner:
             # Prompt should be passed via stdin, not in command
             assert "-malicious prompt" not in cmd.command
             assert cmd.prompt == "-malicious prompt"
+
+
+class TestGrokRunner:
+    """Tests for Grok CLI command construction."""
+
+    @pytest.fixture
+    def runner(self):
+        return GrokRunner()
+
+    def test_exec_basic_command(self, runner):
+        """Should build basic exec command matching the verified invocation."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            cmd = runner.build_exec_command(prompt="Hello")
+
+            assert cmd.command[0] == "grok"
+            assert "-p" in cmd.command
+            idx = cmd.command.index("-p")
+            assert cmd.command[idx + 1] == "Hello"
+            assert "--output-format" in cmd.command
+            idx = cmd.command.index("--output-format")
+            assert cmd.command[idx + 1] == "json"
+            assert "--always-approve" in cmd.command
+            assert "--model" in cmd.command
+            idx = cmd.command.index("--model")
+            assert cmd.command[idx + 1] == "grok-4.5"
+            assert "--effort" in cmd.command
+            idx = cmd.command.index("--effort")
+            assert cmd.command[idx + 1] == "low"
+            assert "--disable-web-search" in cmd.command
+            assert cmd.prompt == ""  # Prompt is in command args
+            assert cmd.output_prefix == "Grok Output"
+            assert cmd.stream is False
+
+    def test_exec_with_model_override(self, runner):
+        """model_override should take precedence over config model."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            cmd = runner.build_exec_command(prompt="Hello", model_override="grok-4.5-fast")
+
+            idx = cmd.command.index("--model")
+            assert cmd.command[idx + 1] == "grok-4.5-fast"
+            assert cmd.model == "grok-4.5-fast"
+
+    def test_exec_with_working_directory(self, runner):
+        """Should set cwd for working directory."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            cmd = runner.build_exec_command(prompt="Hello", working_directory="/path/to/dir")
+
+            assert cmd.cwd == "/path/to/dir"
+
+    def test_resume_basic_command(self, runner):
+        """Should build resume command with -r session flag."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            cmd = runner.build_resume_command(session_ref="019f-session", prompt="Continue")
+
+            assert "-r" in cmd.command
+            idx = cmd.command.index("-r")
+            assert cmd.command[idx + 1] == "019f-session"
+            assert "-p" in cmd.command
+            idx = cmd.command.index("-p")
+            assert cmd.command[idx + 1] == "Continue"
+            assert cmd.stream is False
+
+    def test_resume_rejects_flag_injection(self, runner):
+        """Should reject session_ref starting with dash to prevent flag injection."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            with pytest.raises(ValueError) as exc_info:
+                runner.build_resume_command(session_ref="--malicious-flag", prompt="Hello")
+
+            assert "cannot start with '-'" in str(exc_info.value)
+
+    def test_not_found_hint(self, runner):
+        """Should include helpful installation hint."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.model = "grok-4.5"
+            mock_config.grok.effort = "low"
+
+            cmd = runner.build_exec_command(prompt="Hello")
+
+            assert "grok" in cmd.not_found_hint.lower()
+
+    def test_output_cleaner_parses_json_text_field(self, runner):
+        """get_output_cleaner should extract the `text` field from grok's JSON envelope."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.clean_output = True
+
+            cleaner = runner.get_output_cleaner()
+            raw = '{"text": "Hello from grok", "stopReason": "EndTurn", "sessionId": "abc123"}'
+            assert cleaner(raw, "") == "Hello from grok"
+
+    def test_output_cleaner_falls_back_on_malformed_json(self, runner):
+        """A non-JSON/malformed payload should be returned as-is rather than raising."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            mock_config.grok.clean_output = True
+
+            cleaner = runner.get_output_cleaner()
+            raw = "not json at all"
+            assert cleaner(raw, "") == "not json at all"
 
 
 class TestAgentInterface:

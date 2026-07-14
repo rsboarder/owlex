@@ -88,7 +88,7 @@ def load_councils(limit: int, with_blind_only: bool = False) -> list[dict]:
             ORDER BY co.completed_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (1000,),
         )
         councils = [dict(r) for r in cur.fetchall()]
         for c in councils:
@@ -104,7 +104,8 @@ def load_councils(limit: int, with_blind_only: bool = False) -> list[dict]:
                 (c["council_id"],),
             )
             c["r1_calls"] = [dict(r) for r in cur.fetchall()]
-        return councils
+        qualifying = [c for c in councils if len(c["r1_calls"]) >= 2]
+        return qualifying[:limit]
     finally:
         conn.close()
 

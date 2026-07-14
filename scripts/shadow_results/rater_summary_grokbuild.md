@@ -1,35 +1,35 @@
 # Blind-Rater Shadow Replay — grok-build vs existing claude_blind
 
-**Model**: `grok-4.5` via Grok CLI
-**Generated**: 2026-07-14 22:40:59
+**Model**: `grok-build` via Grok CLI
+**Generated**: 2026-05-28 21:59:26
 
 ## Volume
 
 | Metric | Count |
 |---|---|
-| Councils replayed | 40 |
-| Total per-agent comparisons | 80 |
+| Councils replayed | 57 |
+| Total per-agent comparisons | 156 |
 
 ## Score agreement (-1 / +1)
 
 | Metric | Value |
 |---|---|
-| Exact match | 71/80 = 88.8% |
-| Disagreements (flips) | 9 |
+| Exact match | 120/156 = 76.9% |
+| Disagreements (flips) | 36 |
 
 ## Dimension correlation (Spearman ρ)
 
 | Dimension | ρ | N pairs |
 |---|---|---|
-| groundedness | 0.067 | 80 |
-| helpfulness  | 0.214 | 46 |
-| correctness  | 0.236 | 48 |
+| groundedness | 0.438 | 156 |
+| helpfulness  | 0.225 | 150 |
+| correctness  | 0.388 | 150 |
 
 ## Top-1 winner agreement (who got the best rating in each council)
 
 | Metric | Value |
 |---|---|
-| Same winner | 17/40 = 42.5% |
+| Same winner | 33/56 = 58.9% |
 
 ## Interpretation guide
 

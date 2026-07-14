@@ -106,7 +106,7 @@ def load_councils(limit: int) -> list[dict]:
             ORDER BY co.completed_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (1000,),
         )
         cids = [r["council_id"] for r in cur.fetchall()]
         councils = []
@@ -133,7 +133,10 @@ def load_councils(limit: int) -> list[dict]:
                 (cid,),
             )
             existing = [dict(r) for r in cur.fetchall()]
-            councils.append({"council_id": cid, "r1_calls": r1_calls, "existing_ratings": existing})
+            if len(r1_calls) >= 2:
+                councils.append({"council_id": cid, "r1_calls": r1_calls, "existing_ratings": existing})
+                if len(councils) >= limit:
+                    break
         return councils
     finally:
         conn.close()
