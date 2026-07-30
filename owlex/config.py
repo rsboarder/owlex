@@ -136,7 +136,9 @@ class GrokConfig:
       strip_tool_narration — drop leading I'll/Pulling… monologue from final text
     """
     model: str = "grok-4.5"  # OWLEX_GROK_MODEL
-    effort: str = "low"  # OWLEX_GROK_EFFORT (reasoning effort)
+    # medium: more reasoning headroom after Phase-0 quality was already top-tier
+    # at low; expect higher latency. Override with OWLEX_GROK_EFFORT=low|high.
+    effort: str = "medium"  # OWLEX_GROK_EFFORT (reasoning effort)
     clean_output: bool = True
     output_contract: bool = True  # OWLEX_GROK_OUTPUT_CONTRACT
     strip_tool_narration: bool = True  # OWLEX_GROK_STRIP_TOOL_NARRATION
@@ -306,7 +308,7 @@ def load_config() -> OwlexConfig:
 
     grok = GrokConfig(
         model=os.environ.get("OWLEX_GROK_MODEL", "grok-4.5"),
-        effort=os.environ.get("OWLEX_GROK_EFFORT", "low"),
+        effort=os.environ.get("OWLEX_GROK_EFFORT", "medium"),
         clean_output=_get_bool("OWLEX_GROK_CLEAN_OUTPUT", True),
         output_contract=_get_bool("OWLEX_GROK_OUTPUT_CONTRACT", True),
         strip_tool_narration=_get_bool("OWLEX_GROK_STRIP_TOOL_NARRATION", True),

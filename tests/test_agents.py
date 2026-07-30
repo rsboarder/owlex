@@ -627,7 +627,7 @@ def _mock_grok_cfg(mock_config, **overrides):
     """Fully configure mock_config.grok so MagicMock attrs aren't truthy by accident."""
     defaults = {
         "model": "grok-4.5",
-        "effort": "low",
+        "effort": "medium",
         "clean_output": True,
         "output_contract": False,
         "strip_tool_narration": False,
@@ -664,7 +664,7 @@ class TestGrokRunner:
             assert cmd.command[idx + 1] == "grok-4.5"
             assert "--effort" in cmd.command
             idx = cmd.command.index("--effort")
-            assert cmd.command[idx + 1] == "low"
+            assert cmd.command[idx + 1] == "medium"
             assert "--disable-web-search" in cmd.command
             assert cmd.prompt == ""  # Prompt is in command args
             assert cmd.output_prefix == "Grok Output"
