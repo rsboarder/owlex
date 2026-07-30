@@ -2,6 +2,7 @@
 Tests for agent CLI command construction.
 """
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -622,6 +623,20 @@ class TestAiChatRunner:
             assert cmd.prompt == "-malicious prompt"
 
 
+def _mock_grok_cfg(mock_config, **overrides):
+    """Fully configure mock_config.grok so MagicMock attrs aren't truthy by accident."""
+    defaults = {
+        "model": "grok-4.5",
+        "effort": "low",
+        "clean_output": True,
+        "output_contract": False,
+        "strip_tool_narration": False,
+    }
+    defaults.update(overrides)
+    for key, value in defaults.items():
+        setattr(mock_config.grok, key, value)
+
+
 class TestGrokRunner:
     """Tests for Grok CLI command construction."""
 
@@ -632,8 +647,7 @@ class TestGrokRunner:
     def test_exec_basic_command(self, runner):
         """Should build basic exec command matching the verified invocation."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             cmd = runner.build_exec_command(prompt="Hello")
 
@@ -656,11 +670,34 @@ class TestGrokRunner:
             assert cmd.output_prefix == "Grok Output"
             assert cmd.stream is False
 
+    def test_exec_appends_output_contract_when_enabled(self, runner):
+        """Phase-0: output_contract=True appends the Verdict/Evidence suffix."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, output_contract=True)
+
+            cmd = runner.build_exec_command(prompt="Review this diff")
+
+            idx = cmd.command.index("-p")
+            prepared = cmd.command[idx + 1]
+            assert prepared.startswith("Review this diff")
+            assert "Output contract (mandatory)" in prepared
+            assert "**Verdict:**" in prepared
+
+    def test_exec_contract_idempotent(self, runner):
+        """Do not double-append the contract if the prompt already has it."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, output_contract=True)
+            from owlex.agents.grok import apply_output_contract
+
+            once = apply_output_contract("Review this")
+            cmd = runner.build_exec_command(prompt=once)
+            prepared = cmd.command[cmd.command.index("-p") + 1]
+            assert prepared.count("Output contract (mandatory)") == 1
+
     def test_exec_with_model_override(self, runner):
         """model_override should take precedence over config model."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             cmd = runner.build_exec_command(prompt="Hello", model_override="grok-4.5-fast")
 
@@ -671,8 +708,7 @@ class TestGrokRunner:
     def test_exec_with_working_directory(self, runner):
         """Should set cwd for working directory."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             cmd = runner.build_exec_command(prompt="Hello", working_directory="/path/to/dir")
 
@@ -681,8 +717,7 @@ class TestGrokRunner:
     def test_resume_basic_command(self, runner):
         """Should build resume command with -r session flag."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             cmd = runner.build_resume_command(session_ref="019f-session", prompt="Continue")
 
@@ -697,8 +732,7 @@ class TestGrokRunner:
     def test_resume_rejects_flag_injection(self, runner):
         """Should reject session_ref starting with dash to prevent flag injection."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             with pytest.raises(ValueError) as exc_info:
                 runner.build_resume_command(session_ref="--malicious-flag", prompt="Hello")
@@ -708,8 +742,7 @@ class TestGrokRunner:
     def test_not_found_hint(self, runner):
         """Should include helpful installation hint."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.model = "grok-4.5"
-            mock_config.grok.effort = "low"
+            _mock_grok_cfg(mock_config)
 
             cmd = runner.build_exec_command(prompt="Hello")
 
@@ -718,7 +751,7 @@ class TestGrokRunner:
     def test_output_cleaner_parses_json_text_field(self, runner):
         """get_output_cleaner should extract the `text` field from grok's JSON envelope."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.clean_output = True
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=False)
 
             cleaner = runner.get_output_cleaner()
             raw = '{"text": "Hello from grok", "stopReason": "EndTurn", "sessionId": "abc123"}'
@@ -727,11 +760,65 @@ class TestGrokRunner:
     def test_output_cleaner_falls_back_on_malformed_json(self, runner):
         """A non-JSON/malformed payload should be returned as-is rather than raising."""
         with patch("owlex.agents.grok.config") as mock_config:
-            mock_config.grok.clean_output = True
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=False)
 
             cleaner = runner.get_output_cleaner()
             raw = "not json at all"
             assert cleaner(raw, "") == "not json at all"
+
+    def test_output_cleaner_strips_tool_narration(self, runner):
+        """Phase-0: strip leading I'll/Pulling monologue before first heading."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=True)
+
+            cleaner = runner.get_output_cleaner()
+            body = (
+                "I'll read the routes and guard next.\n"
+                "Pulling the auth module.\n"
+                "# Council review: IDOR fix\n\n"
+                "**Verdict:** Ship it.\n"
+            )
+            raw = json.dumps({"text": body, "stopReason": "EndTurn"})
+            cleaned = cleaner(raw, "")
+            assert cleaned.startswith("# Council review")
+            assert "I'll read" not in cleaned
+            assert "Verdict" in cleaned
+
+    def test_output_cleaner_strip_can_be_disabled(self, runner):
+        """strip_tool_narration=False keeps the tool preamble."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=False)
+
+            cleaner = runner.get_output_cleaner()
+            body = "I'll read foo.\n# Title\n**Verdict:** ok\n"
+            cleaned = cleaner(json.dumps({"text": body}), "")
+            assert cleaned.startswith("I'll read")
+
+    def test_output_cleaner_strips_inline_glued_verdict(self, runner):
+        """Live edge: narration glued to **Verdict:** (colon inside bold) strips."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=True)
+
+            cleaner = runner.get_output_cleaner()
+            # Live Grok form: **Verdict:**  (== ** + Verdict: + **)
+            body = (
+                "I'll check the repo for patterns so the recommendation is grounded, "
+                "then give a short review.**Verdict:** Use a boolean flag.\n"
+            )
+            cleaned = cleaner(json.dumps({"text": body}), "")
+            assert cleaned.startswith("**Verdict:**")
+            assert "I'll check" not in cleaned
+
+    def test_output_cleaner_strips_verdict_colon_outside_bold(self, runner):
+        """Also accept **Verdict**: (colon outside bold markers)."""
+        with patch("owlex.agents.grok.config") as mock_config:
+            _mock_grok_cfg(mock_config, clean_output=True, strip_tool_narration=True)
+
+            cleaner = runner.get_output_cleaner()
+            body = "I'll read next.\n**Verdict**: Ship it.\n"
+            cleaned = cleaner(json.dumps({"text": body}), "")
+            assert cleaned.startswith("**Verdict**")
+            assert "I'll read" not in cleaned
 
 
 class TestAgentInterface:

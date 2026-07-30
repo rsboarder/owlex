@@ -130,10 +130,16 @@ class GrokConfig:
     No per-runner timeout field: council/engine already thread a call-level
     timeout through to every subprocess (see run_agent's ``timeout`` kwarg),
     so a second, unread knob here would just be dead config.
+
+    Phase-0 harness knobs (default on — A/B ship 2026-07-30):
+      output_contract     — append Verdict/Evidence/Risks/Recommendation suffix
+      strip_tool_narration — drop leading I'll/Pulling… monologue from final text
     """
     model: str = "grok-4.5"  # OWLEX_GROK_MODEL
     effort: str = "low"  # OWLEX_GROK_EFFORT (reasoning effort)
     clean_output: bool = True
+    output_contract: bool = True  # OWLEX_GROK_OUTPUT_CONTRACT
+    strip_tool_narration: bool = True  # OWLEX_GROK_STRIP_TOOL_NARRATION
 
 
 @dataclass(frozen=True)
@@ -302,6 +308,8 @@ def load_config() -> OwlexConfig:
         model=os.environ.get("OWLEX_GROK_MODEL", "grok-4.5"),
         effort=os.environ.get("OWLEX_GROK_EFFORT", "low"),
         clean_output=_get_bool("OWLEX_GROK_CLEAN_OUTPUT", True),
+        output_contract=_get_bool("OWLEX_GROK_OUTPUT_CONTRACT", True),
+        strip_tool_narration=_get_bool("OWLEX_GROK_STRIP_TOOL_NARRATION", True),
     )
 
     council = CouncilConfig(
