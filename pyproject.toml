@@ -19,7 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Pin <2: PyPI "mcp" 2.x is a different package (no mcp.server.fastmcp).
+    # FastMCP lives in the official Model Context Protocol SDK (1.x series).
+    "mcp>=1.0.0,<2",
     "pydantic>=2.0.0",
     "httpx>=0.24.0",
 ]
