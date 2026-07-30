@@ -9,14 +9,14 @@ import shutil
 import sys
 from dataclasses import replace
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import random
 
 from . import store
 from .agreement import score_agreement
 from .config import config
-from .context import gather_context
+from .context import context_is_agent_autoloaded, gather_context
 from .engine import engine, build_agent_response, AGENT_RUNNERS
 from .ports import EnginePort
 from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
@@ -724,6 +724,33 @@ class Council:
 
     # === Round execution ===
 
+    def _context_selector(
+        self,
+        working_directory: str | None,
+        project_context: str | None,
+    ) -> Callable[[Participant], str | None]:
+        """Per-participant PROJECT CONTEXT, dropped where it would be a duplicate.
+
+        An agent whose CLI auto-loads the repo's AGENTS.md already has that text
+        in its request before owlex's prompt arrives. When our context was
+        extracted from that same file (CLAUDE.md symlinked to AGENTS.md),
+        inlining it again just re-sends what the CLI shipped. Every other
+        combination — a different context file, a runner that does not
+        auto-load, no working directory — keeps the block untouched.
+        """
+        if not project_context or not working_directory:
+            return lambda p: project_context
+        if not context_is_agent_autoloaded(working_directory):
+            return lambda p: project_context
+
+        def select(p: Participant) -> str | None:
+            if not p.runner.auto_loads_project_instructions:
+                return project_context
+            self.log(f"{p.seat}: skipping PROJECT CONTEXT ({len(project_context)} chars) — CLI auto-loads it")
+            return None
+
+        return select
+
     async def _run_round_1(
         self,
         prompt: str,
@@ -737,8 +764,10 @@ class Council:
         tasks = {}
         async_tasks = []
 
+        context_for = self._context_selector(working_directory, project_context)
+
         for p in participants:
-            agent_prompt = inject_role_prefix(prompt, p.role, context=project_context)
+            agent_prompt = inject_role_prefix(prompt, p.role, context=context_for(p))
 
             task = self._engine.create_task(
                 command=f"council_{p.seat}",
@@ -782,7 +811,7 @@ class Council:
                 continue
             task = tasks.get(p.seat)
             if task and task.status == "failed" and self._is_capacity_error(task, p.runner):
-                agent_prompt = inject_role_prefix(prompt, p.role, context=project_context)
+                agent_prompt = inject_role_prefix(prompt, p.role, context=context_for(p))
                 fallback_task, fallback_runner_name = await self._run_fallback(
                     p.seat, p.runner.name, agent_prompt, working_directory, round_start,
                 )

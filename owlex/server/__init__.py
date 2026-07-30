@@ -191,6 +191,19 @@ def main():
                 log(f"[WARN] agreement health-check failed: {_e}")
         asyncio.create_task(_probe_agreement())
 
+        # Grok seat (aichat→grok substitution) auth/model probe. Catches
+        # "not signed in" before a council burns 5 other seats and scores
+        # aichat −1 for infra. Non-blocking; 30s covers cold start.
+        async def _probe_grok():
+            try:
+                from ..agents.grok import probe_grok_seat
+                ok, msg = await probe_grok_seat(timeout=30.0)
+                tag = "[ok]" if ok else "[WARN]"
+                log(f"{tag} grok seat health-check: {msg}")
+            except Exception as _e:
+                log(f"[WARN] grok seat health-check failed: {_e}")
+        asyncio.create_task(_probe_grok())
+
         # Optional GLM-5.2 blind-rater probe — only when enabled.
         # Non-blocking: logs [ok]/[WARN] but never blocks server startup.
         from ..config import config as _config

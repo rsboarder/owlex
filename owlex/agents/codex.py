@@ -108,6 +108,18 @@ class CodexRunner(AgentRunner):
     def output_prefix(self) -> str:
         return "Codex Output"
 
+    @property
+    def auto_loads_project_instructions(self) -> bool:
+        """Verified from codex's own rollouts under ``~/.codex/sessions``.
+
+        With cwd set to a repo that has AGENTS.md, codex emits the file into
+        ``world_state.state.agents_md.text`` and re-sends it as a user message
+        headed "# AGENTS.md instructions for <dir>" — both before owlex's
+        prompt arrives. On a repo with only CLAUDE.md, ``agents_md`` is empty,
+        so this covers AGENTS.md only.
+        """
+        return True
+
     def build_exec_command(
         self,
         prompt: str,

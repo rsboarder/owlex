@@ -6,14 +6,29 @@ Phase-0 harness (A/B ship 2026-07-30, N=5 rated, win_rate_B=0.8):
   - optional output-contract suffix on prompts (default on)
   - strip leading tool-narration from final answers (default on)
 See docs/design/ab-grok-harness-benchmark.md.
+
+Startup probe (``probe_grok_seat``) catches auth / missing-CLI failures that
+previously surfaced only as a silent aichat seat score of −1 mid-council.
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
+import os
 import re
+import shutil
+import time
+from pathlib import Path
 from typing import Callable
 
 from ..config import config
 from .base import AgentRunner, AgentCommand
+
+
+# How long a SUCCESSFUL startup probe stays valid. Auth/catalog issues move
+# on a longer timescale than a server respawn; failures are never cached.
+PROBE_CACHE_TTL = int(os.getenv("OWLEX_GROK_PROBE_TTL", "86400"))
 
 
 # Match the A/B arm ``contract_strip`` wording (do not drift without re-running A/B).
@@ -242,3 +257,141 @@ class GrokRunner(AgentRunner):
 
     def get_output_cleaner(self) -> Callable[[str, str], str]:
         return clean_grok_output
+
+
+# ---------------------------------------------------------------------------
+# Startup health-check (auth + model + CLI present)
+# ---------------------------------------------------------------------------
+
+def _probe_cache_path() -> Path:
+    home = Path(os.environ.get("OWLEX_HOME", str(Path.home() / ".owlex")))
+    return home / "cache" / "grok-probe.json"
+
+
+def _read_probe_cache() -> str | None:
+    """Return cached success message when stamp is fresh for this model."""
+    try:
+        data = json.loads(_probe_cache_path().read_text(encoding="utf-8"))
+        if data.get("model") != config.grok.model:
+            return None
+        age = time.time() - float(data["probed_at"])
+        if age < 0 or age > PROBE_CACHE_TTL:
+            return None
+        return f"{data['message']} (cached, probed {age / 3600:.1f}h ago)"
+    except Exception:  # noqa: BLE001 — bad stamp → real probe
+        return None
+
+
+def _write_probe_cache(message: str) -> None:
+    try:
+        path = _probe_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({
+            "model": config.grok.model,
+            "probed_at": time.time(),
+            "message": message,
+        })
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 — caching is optional
+        pass
+
+
+async def _terminate(proc: asyncio.subprocess.Process | None) -> None:
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        return
+    try:
+        await proc.wait()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _build_probe_command() -> list[str]:
+    """Minimal headless argv — no output-contract suffix (keep probe tiny)."""
+    return [
+        "grok",
+        "-p", "Reply with exactly: ok",
+        "--output-format", "json",
+        "--always-approve",
+        "--model", config.grok.model,
+        "--effort", config.grok.effort,
+        "--disable-web-search",
+    ]
+
+
+async def probe_grok_seat(timeout: float = 30.0, use_cache: bool = True) -> tuple[bool, str]:
+    """Startup health-check: grok CLI present, signed in, model responds.
+
+    Mirrors ``agreement.probe_agreement_model``. Failures never cache so a
+    dropped auth session is re-detected on the next MCP start. Successes stamp
+    for ``OWLEX_GROK_PROBE_TTL`` (default 24h) to avoid paying a full grok
+    cold-start on every server respawn.
+
+    Returns ``(ok, message)``. Never raises.
+    """
+    if use_cache:
+        cached = _read_probe_cache()
+        if cached is not None:
+            return True, cached
+
+    if not shutil.which("grok"):
+        return False, (
+            "grok CLI not found on PATH; aichat→grok seat will fail. "
+            "Install the Grok CLI or clear COUNCIL_SUBSTITUTION_MODELS grok entry."
+        )
+
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *_build_probe_command(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        await _terminate(proc)
+        return False, (
+            f"grok seat probe timed out after {timeout}s "
+            f"(model={config.grok.model!r})"
+        )
+    except FileNotFoundError:
+        return False, "grok CLI not found on PATH; aichat→grok seat will fail"
+    except Exception as e:  # noqa: BLE001
+        await _terminate(proc)
+        return False, f"grok seat probe error: {e}"
+
+    out = (stdout or b"").decode("utf-8", errors="replace")
+    err = (stderr or b"").decode("utf-8", errors="replace")
+    combined = (out + "\n" + err).strip()
+    low = combined.lower()
+
+    if proc.returncode != 0:
+        if any(s in low for s in ("not signed in", "unauthenticated", "login", "auth")):
+            return False, (
+                f"grok seat not authenticated (model={config.grok.model!r}). "
+                f"Sign in via the Grok CLI. error head: {combined[:200]}"
+            )
+        return False, (
+            f"grok seat probe exit {proc.returncode} "
+            f"(model={config.grok.model!r}): {combined[:200]}"
+        )
+
+    text = parse_grok_text(out)
+    if not (text or "").strip():
+        # Empty completed response is still a signal the CLI ran; treat as soft ok
+        # only if stdout had a JSON envelope, else fail.
+        if "text" not in out and not out.strip():
+            return False, (
+                f"grok seat probe returned empty output "
+                f"(model={config.grok.model!r}); possible auth/model issue"
+            )
+
+    message = f"grok seat {config.grok.model!r} probed ok"
+    _write_probe_cache(message)
+    return True, message

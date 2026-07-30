@@ -100,6 +100,8 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
 | `OWLEX_GROK_EFFORT` | `low` | Grok reasoning effort (`low`/`medium`/`high`) |
 | `OWLEX_GROK_OUTPUT_CONTRACT` | `true` | Append Verdict/Evidence/Risks/Recommendation suffix (Phase-0 A/B) |
 | `OWLEX_GROK_STRIP_TOOL_NARRATION` | `true` | Strip leading I'll/Pulling… monologue from final answers |
+| `OWLEX_GROK_PROBE_TTL` | `86400` | Cache TTL (s) for successful grok seat startup probe |
+| `OWLEX_AGREEMENT_PROBE_TTL` | `86400` | Cache TTL (s) for successful agreement-judge model probe |
 
 ## Testing
 

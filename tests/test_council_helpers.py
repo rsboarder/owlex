@@ -1,6 +1,7 @@
 """Unit tests for the pure / nearly-pure helpers extracted from Council.deliberate()."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -94,3 +95,80 @@ class TestPositionDeltaThresholds:
         delta, label = captured[0]
         assert label == "unchanged"
         assert delta < 0.845
+
+
+class TestContextSelector:
+    """PROJECT CONTEXT is dropped only where it duplicates what the CLI already loaded.
+
+    Measured on bookmatcher council rollouts: the codex CLI ships the repo's
+    AGENTS.md into `world_state.state.agents_md.text` AND as a user message,
+    before owlex's prompt. With CLAUDE.md symlinked to AGENTS.md there, owlex's
+    14k-char PROJECT CONTEXT block was a third copy of the same text.
+    """
+
+    @staticmethod
+    def _participant(seat: str, *, auto_loads: bool):
+        from owlex.models import Participant
+
+        runner = SimpleNamespace(auto_loads_project_instructions=auto_loads)
+        return Participant(seat=seat, runner=runner, is_substituted=False)
+
+    def test_drops_context_only_for_autoloading_runner(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text("# project instructions")
+        (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
+
+        select = Council()._context_selector(str(tmp_path), "CTX")
+        assert select(self._participant("codex", auto_loads=True)) is None
+        assert select(self._participant("gemini", auto_loads=False)) == "CTX"
+
+    def test_keeps_context_when_claude_md_is_a_distinct_file(self, tmp_path):
+        """A CLAUDE.md that merely sits next to AGENTS.md is not a duplicate."""
+        (tmp_path / "AGENTS.md").write_text("# agents")
+        (tmp_path / "CLAUDE.md").write_text("# different claude guidance")
+
+        select = Council()._context_selector(str(tmp_path), "CTX")
+        assert select(self._participant("codex", auto_loads=True)) == "CTX"
+
+    def test_keeps_context_when_repo_has_no_agents_md(self, tmp_path):
+        """owlex / second-brain layout: CLAUDE.md only — codex loads nothing itself."""
+        (tmp_path / "CLAUDE.md").write_text("# claude only")
+
+        select = Council()._context_selector(str(tmp_path), "CTX")
+        assert select(self._participant("codex", auto_loads=True)) == "CTX"
+
+    def test_no_working_directory_is_a_passthrough(self):
+        select = Council()._context_selector(None, "CTX")
+        assert select(self._participant("codex", auto_loads=True)) == "CTX"
+
+    def test_no_context_stays_none(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text("# agents")
+        (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
+
+        select = Council()._context_selector(str(tmp_path), None)
+        assert select(self._participant("gemini", auto_loads=False)) is None
+
+
+class TestRunnerAutoloadFlags:
+    """Only runners whose auto-loading was verified from their OWN transcripts opt in.
+
+    codex  — ~/.codex/sessions rollout: world_state.agents_md.text + a
+             "# AGENTS.md instructions for <dir>" user message.
+    cursor — ~/.cursor/chats store.db: <always_applied_workspace_rule ...>.
+    grok   — ~/.grok/sessions chat_history.jsonl: a synthetic
+             "project_instructions" turn listing the repo's AGENTS.md.
+
+    Deliberately still off: gemini (runs in a tmpdir and only reads GEMINI.md),
+    opencode + claudeor (binary shows AGENTS.md discovery, but they put it in
+    an unpersisted system prompt, so it is not transcript-proven), aichat (CLI
+    not installed — unverifiable).
+    """
+
+    def test_only_transcript_verified_runners_opt_in(self):
+        from owlex.engine import AGENT_RUNNERS
+        from owlex.models import Agent
+
+        opted_in = {
+            a.value for a, r in AGENT_RUNNERS.items()
+            if r.auto_loads_project_instructions
+        }
+        assert opted_in == {Agent.CODEX.value, Agent.CURSOR.value, Agent.GROK.value}

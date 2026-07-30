@@ -55,6 +55,19 @@ class AgentRunner(ABC):
         """Patterns indicating capacity/quota exhaustion that should trigger fallback retry."""
         return []
 
+    @property
+    def auto_loads_project_instructions(self) -> bool:
+        """Whether this CLI loads the repo's AGENTS.md into its own prompt.
+
+        When True, the council drops its PROJECT CONTEXT block for this runner
+        — but only when that block was extracted from the very file the CLI
+        already loaded (see ``context.context_is_agent_autoloaded``). Default
+        False: a runner is opted in only once its auto-loading is verified from
+        that CLI's own transcripts, because a wrong True silently strips real
+        context from the advisor.
+        """
+        return False
+
     @abstractmethod
     def build_exec_command(
         self,

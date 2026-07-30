@@ -84,6 +84,17 @@ class CursorRunner(AgentRunner):
     def output_prefix(self) -> str:
         return "Cursor Output"
 
+    @property
+    def auto_loads_project_instructions(self) -> bool:
+        """Verified from cursor's own chat store under ``~/.cursor/chats``.
+
+        A bookmatcher session's ``store.db`` holds the repo's instructions as
+        ``<always_applied_workspace_rule name=".../CLAUDE.md">`` with no council
+        marker before it — cursor injects both CLAUDE.md and AGENTS.md as
+        workspace rules on its own, so owlex's copy landed a third time.
+        """
+        return True
+
     def build_exec_command(
         self,
         prompt: str,

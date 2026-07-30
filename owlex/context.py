@@ -16,6 +16,13 @@ CONTEXT_FILES = [
     ".claude/CLAUDE.md",
 ]
 
+# Files an agent CLI loads from its working directory on its own, before owlex
+# says anything. Measured for codex: it puts the repo's AGENTS.md into
+# ``world_state.state.agents_md.text`` AND re-sends it as a user message
+# prefixed "# AGENTS.md instructions for <dir>". It does NOT do this for
+# CLAUDE.md (a second-brain rollout, CLAUDE.md-only, shows ``agents_md: {}``).
+AGENT_AUTOLOADED_FILES = ["AGENTS.md"]
+
 
 def _read_file(working_dir: str, filename: str) -> str | None:
     path = Path(working_dir) / filename
@@ -25,6 +32,46 @@ def _read_file(working_dir: str, filename: str) -> str | None:
         except Exception:
             pass
     return None
+
+
+def _resolve_context_source(working_dir: str) -> tuple[Path, str] | None:
+    """First CONTEXT_FILES entry that is readable, as ``(path, content)``.
+
+    Single source of truth for *which* file the context comes from, so
+    ``gather_context`` and ``context_is_agent_autoloaded`` can never disagree
+    about it.
+    """
+    for filename in CONTEXT_FILES:
+        content = _read_file(working_dir, filename)
+        if content:
+            return Path(working_dir) / filename, content
+    return None
+
+
+def context_is_agent_autoloaded(working_dir: str) -> bool:
+    """True when our context file IS a file the agent CLI already loads itself.
+
+    Repos increasingly point ``CLAUDE.md`` at ``AGENTS.md`` (bookmatcher makes
+    it a symlink). There, an agent that auto-loads AGENTS.md already holds the
+    full text, and owlex's PROJECT CONTEXT block is a redundant extra copy in
+    the same request. Compared by resolved path, so a distinct CLAUDE.md that
+    merely sits next to an AGENTS.md is NOT treated as a duplicate.
+    """
+    source = _resolve_context_source(working_dir)
+    if source is None:
+        return False
+    try:
+        resolved = source[0].resolve()
+    except OSError:
+        return False
+    for filename in AGENT_AUTOLOADED_FILES:
+        candidate = Path(working_dir) / filename
+        try:
+            if candidate.exists() and candidate.resolve() == resolved:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _extract_project_basics(content: str) -> str:
@@ -164,14 +211,10 @@ async def gather_context(working_dir: str, question: str | None = None) -> str |
         Formatted context string, or None if no context available.
     """
     # Read CLAUDE.md
-    content = None
-    for filename in CONTEXT_FILES:
-        content = _read_file(working_dir, filename)
-        if content:
-            break
-
-    if not content:
+    source = _resolve_context_source(working_dir)
+    if source is None:
         return None
+    _, content = source
 
     parts = []
 

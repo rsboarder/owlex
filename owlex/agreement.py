@@ -7,6 +7,9 @@ import asyncio
 import json
 import os
 import re
+import tempfile
+import time
+from pathlib import Path
 
 
 AGREEMENT_MODEL = os.getenv("OWLEX_AGREEMENT_MODEL", "gpt-5.5")
@@ -22,6 +25,35 @@ AGREEMENT_REASONING = os.getenv("OWLEX_AGREEMENT_REASONING", "low")
 # wall-time is 3-5s, so 90s is generous headroom for a slow cold-start.
 DEFAULT_JUDGE_TIMEOUT = int(os.getenv("OWLEX_AGREEMENT_TIMEOUT", "90"))
 
+# How long a SUCCESSFUL startup probe stays valid. The probe answers "is the
+# pinned model still in the codex catalog" — a fact that moves on the order of
+# weeks — yet it re-ran on every MCP server start (~22/day measured), each run
+# paying a full codex prompt to send 23 bytes. Failures are never cached, so a
+# model disappearing is still noticed on the next start.
+PROBE_CACHE_TTL = int(os.getenv("OWLEX_AGREEMENT_PROBE_TTL", "86400"))
+
+# Basename of the empty scratch dir handed to codex as its cwd. Namespaced by
+# uid so a shared /tmp cannot collide across users.
+_JUDGE_CWD_NAME = f"owlex-judge-cwd-{os.getuid()}" if hasattr(os, "getuid") else "owlex-judge-cwd"
+
+
+def _judge_cwd() -> str:
+    """Empty scratch directory used as the judge subprocess's working dir.
+
+    Without ``--cd``, codex inherits the MCP server process's cwd (the project
+    root) and auto-loads that repo's ``AGENTS.md`` into every judge prompt —
+    measured at ~27k input tokens per call for a prompt that is pure text
+    classification and never reads the repo. Pointing codex at an empty dir
+    outside any project removes the cost without removing capability.
+
+    Stable rather than a per-call ``mkdtemp`` so repeated judge calls do not
+    churn the filesystem. ``mkdir(exist_ok=True)`` is atomic, so concurrent
+    calls cannot race on creating it.
+    """
+    path = Path(tempfile.gettempdir()) / _JUDGE_CWD_NAME
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return str(path)
+
 
 def _build_judge_command() -> list[str]:
     """Construct the codex exec argv shared by probe and score paths.
@@ -29,14 +61,63 @@ def _build_judge_command() -> list[str]:
     The judge runs in read-only sandbox — no file writes, no shell — because
     the prompt is pure text classification and any tool call would just add
     latency. Reasoning effort is configurable for quality/speed tradeoff.
+    ``--cd`` pins an empty scratch dir so no repo ``AGENTS.md`` is discovered
+    (same pattern as ``second_opinion._cmd``).
     """
     return [
         "codex", "exec", "--skip-git-repo-check",
         "-c", f'model_reasoning_effort="{AGREEMENT_REASONING}"',
         "--model", AGREEMENT_MODEL,
         "--sandbox", "read-only",
+        "--cd", _judge_cwd(),
         "-",  # read prompt from stdin
     ]
+
+
+def _probe_cache_path() -> Path:
+    """Stamp file for the last successful probe (honours ``OWLEX_HOME``)."""
+    home = Path(os.environ.get("OWLEX_HOME", str(Path.home() / ".owlex")))
+    return home / "cache" / "agreement-probe.json"
+
+
+def _read_probe_cache() -> str | None:
+    """Return the cached success message when a fresh success exists for this model.
+
+    Only successes are ever written, so a hit always means ``ok=True``. Any
+    missing / corrupt / stale stamp is a miss: the caller then runs a real
+    probe. Never raises — this sits on the server-startup path.
+    """
+    try:
+        data = json.loads(_probe_cache_path().read_text(encoding="utf-8"))
+        if data.get("model") != AGREEMENT_MODEL:
+            return None
+        age = time.time() - float(data["probed_at"])
+        if age < 0 or age > PROBE_CACHE_TTL:
+            return None
+        return f"{data['message']} (cached, probed {age / 3600:.1f}h ago)"
+    except Exception:  # noqa: BLE001 — a bad stamp must degrade to a real probe
+        return None
+
+
+def _write_probe_cache(message: str) -> None:
+    """Stamp a successful probe. Best-effort; failures are swallowed.
+
+    Written via a temp file + atomic rename so a concurrently starting server
+    can never read a half-written stamp.
+    """
+    try:
+        path = _probe_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({
+            "model": AGREEMENT_MODEL,
+            "probed_at": time.time(),
+            "message": message,
+        })
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 — caching is an optimisation, never a gate
+        pass
 
 
 async def _terminate(proc: asyncio.subprocess.Process | None) -> None:
@@ -53,7 +134,7 @@ async def _terminate(proc: asyncio.subprocess.Process | None) -> None:
         pass
 
 
-async def probe_agreement_model(timeout: float = 10.0) -> tuple[bool, str]:
+async def probe_agreement_model(timeout: float = 10.0, use_cache: bool = True) -> tuple[bool, str]:
     """Startup health-check: verify the configured AGREEMENT_MODEL is reachable.
 
     External CLI catalogs rotate. A model name that worked last week may
@@ -62,10 +143,21 @@ async def probe_agreement_model(timeout: float = 10.0) -> tuple[bool, str]:
     prints a clear warning to stderr (teed to the log file) if the model is
     gone.
 
+    A successful result is stamped to disk and reused for ``PROBE_CACHE_TTL``
+    seconds, so respawning the MCP server does not spawn a codex process each
+    time. A cache hit says so in its message. Failures are never cached: a
+    model going away is still caught on the next start. Pass
+    ``use_cache=False`` to force a real probe.
+
     Returns ``(ok, message)``. Never raises — health-check failure must not
     block server startup; the judge will fall back to overlap-heuristic at
     council time.
     """
+    if use_cache:
+        cached = _read_probe_cache()
+        if cached is not None:
+            return True, cached
+
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -100,7 +192,9 @@ async def probe_agreement_model(timeout: float = 10.0) -> tuple[bool, str]:
             )
         return False, f"agreement model probe exit {proc.returncode}: {combined[:200]}"
 
-    return True, f"agreement model {AGREEMENT_MODEL!r} probed ok"
+    message = f"agreement model {AGREEMENT_MODEL!r} probed ok"
+    _write_probe_cache(message)
+    return True, message
 
 
 AGREEMENT_PROMPT = """\
