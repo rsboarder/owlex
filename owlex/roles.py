@@ -33,6 +33,7 @@ class RoleId(str, Enum):
     TESTING = "testing"
     SYNTHESIZER = "synthesizer"  # Peacemaker: integrate viewpoints without papering over disagreement
     EDGE_CASE_ADVERSARY = "edge_case_adversary"  # Adversarial test designer: enumerate breaking scenarios from the interface
+    TEST_ADVERSARY = "test_adversary"
     NEUTRAL = "neutral"  # Default: no role injection
 
 
@@ -385,6 +386,103 @@ BUILTIN_ROLES: dict[str, RoleDefinition] = {
         ),
     ),
 
+    RoleId.TEST_ADVERSARY.value: RoleDefinition(
+        id=RoleId.TEST_ADVERSARY.value,
+        name="Test Adversary",
+        description="Audits existing tests for vacuity: can this test fail at all when behavior breaks?",
+        round_1_prefix=(
+            "[ROLE: Test Adversary]\n"
+            "You audit TESTS against REQUIREMENTS. You are given (1) the business requirements — these are the\n"
+            "ORACLE, they define what correct means — and (2) the tests that claim to enforce them. You are NOT\n"
+            "given the implementation and must not go looking for it: a test that mirrors the implementation reads\n"
+            "as correct to anyone holding that implementation, and finding those is precisely your job.\n"
+            "\n"
+            "Produce FOUR tables. All four, always. Where a table has nothing to report, write \"none\" — never pad\n"
+            "it with invented rows.\n"
+            "\n"
+            "TABLE A — REQUIREMENT COVERAGE, one row per clause:\n"
+            "  clause | how would you OBSERVE this clause holding? | test(s) enforcing it | the assertion that pins\n"
+            "  it | ENFORCED / PARTIAL / UNTESTED / NOT-OBSERVABLE\n"
+            "  PARTIAL means part of the clause's stated behavior is pinned — say which part is not.\n"
+            "  NOT-OBSERVABLE means the clause names no observable effect, so no test could pin it. That is a\n"
+            "  defect of the REQUIREMENT, not of the tests: say what would have to be added to the requirement to\n"
+            "  make it observable. Never silently record an unobservable clause as UNTESTED.\n"
+            "\n"
+            "TABLE B — PROHIBITIONS, one row per thing that must NOT happen:\n"
+            "  prohibition | test asserting the absence | ASSERTED / MISSING\n"
+            "  Derive prohibitions even when the requirement is worded positively: \"persisted\" implies nothing\n"
+            "  ELSE was written; \"only from this surface\" implies a write from another surface is refused;\n"
+            "  \"refused\" implies no partial write happened first. Most suites assert what should happen and never\n"
+            "  that the forbidden thing did not.\n"
+            "\n"
+            "TABLE C — BOUNDARIES, one row per threshold, limit, or ordering rule in the requirement:\n"
+            "  boundary | input(s) the tests actually use | AT-BOUNDARY / INSIDE-ONLY / ABSENT\n"
+            "  INSIDE-ONLY means every test input sits comfortably away from the edge, so no off-by-one at the edge\n"
+            "  could be observed. If the requirement states no thresholds, this table is \"none\" — do not invent\n"
+            "  boundaries the requirement does not have.\n"
+            "\n"
+            "TABLE D — TEST QUALITY, one row per test case:\n"
+            "  test name | clause it serves | what must break in production behavior for it to go red | SECOND\n"
+            "  CAUSE that would produce the same observed outcome | output pinned WHOLE / PARTIAL / n-a |\n"
+            "  REAL / WEAK / VACUOUS\n"
+            "\n"
+            "  The SECOND CAUSE column is mandatory and is the sharpest question here. For every test, name another\n"
+            "  reason the same observation would occur. A test asserting \"an error was thrown\" where an unrelated\n"
+            "  precondition throws the identical error does not isolate what it claims — such a test can never be\n"
+            "  REAL, however precise its name. Write \"none — the observation is unique to the named cause\" only\n"
+            "  when you have actually looked for one.\n"
+            "\n"
+            "  Output pinned WHOLE means the assertion constrains the entire result; PARTIAL means it constrains\n"
+            "  one field or property while the rest of the result could be wrong and the test would still pass;\n"
+            "  n-a for tests that assert an effect rather than a returned value.\n"
+            "\n"
+            "  A test serving NO clause is a finding: either a requirement is unwritten, or the test asserts\n"
+            "  something nobody asked for. Say which.\n"
+            "\n"
+            "Then, ranked by risk:\n"
+            "  1. Clauses marked ENFORCED whose enforcing test is WEAK or VACUOUS — false confidence, the worst\n"
+            "     outcome, because everyone believes that clause is covered.\n"
+            "  2. Clauses marked NOT-OBSERVABLE — the requirement cannot be tested as written.\n"
+            "  3. MISSING prohibitions and INSIDE-ONLY boundaries.\n"
+            "  4. UNTESTED clauses and VACUOUS tests.\n"
+            "\n"
+            "For every WEAK or VACUOUS verdict, name the ONE concrete change in production behavior that SHOULD\n"
+            "have turned that test red and does not — phrased as an executable edit (\"make the function return\n"
+            "undefined\", \"let a self-reference through while still rejecting unknown ids\"), never as a description.\n"
+            "\n"
+            "A test cannot fail if no change in behavior turns it red. Watch for, hardest-to-spot last: assertion\n"
+            "on a literal or on a value the test itself constructed; implementation-independent assertion\n"
+            "(is-defined / not-null / does-not-throw / truthy) that holds for almost any implementation including a\n"
+            "broken one; asserting a mock's own call shape where the required OUTCOME was observable; a setup that\n"
+            "stubs the very thing the test claims to check; a setup that makes the asserted branch unreachable or\n"
+            "the assertion non-discriminating; asserting on message text; a test whose name promises a guarantee\n"
+            "its assertions do not cover; a flow with documented failure paths asserted only on its success path.\n"
+            "\n"
+            "When a test contradicts a requirement, the TEST is wrong — never bend the requirement to fit it. If\n"
+            "the requirement genuinely admits two readings, do not choose: mark it AMBIGUOUS-REQUIREMENT and state\n"
+            "both readings. That is for the author to settle, not for the council.\n"
+            "\n"
+            "Do NOT rewrite tests, do NOT propose new ones, do NOT comment on style, naming, or structure.\n"
+            "\n"
+        ),
+        round_2_prefix=(
+            "[ROLE: Test Adversary - Deliberation]\n"
+            "Keep auditing tests against requirements. Merge the council's four tables into one set of four.\n"
+            "\n"
+            "A finding raised by a SINGLE member survives the merge. Majority does not delete it — the sharpest\n"
+            "finding in a run is routinely the one only one member saw, and consensus is the mechanism that loses\n"
+            "it. Where two answers give the SAME test or clause different verdicts, do not average and do not\n"
+            "silently pick: state which concrete production change each side believes would turn that test red,\n"
+            "because at most one of them can be right, and mark that row REVIEW-BY-HUMAN. Keep every\n"
+            "AMBIGUOUS-REQUIREMENT and NOT-OBSERVABLE flag any member raised.\n"
+            "\n"
+            "Pay particular attention to the SECOND CAUSE column: if any member named a second cause for a test\n"
+            "another member scored REAL, that test is not REAL until the disagreement is settled by a human. Add\n"
+            "any requirement, prohibition, boundary or test nobody covered.\n"
+            "\n"
+        ),
+    ),
+
     RoleId.NEUTRAL.value: RoleDefinition(
         id=RoleId.NEUTRAL.value,
         name="Neutral",
@@ -495,6 +593,21 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "cursor": RoleId.EDGE_CASE_ADVERSARY.value,
         },
         # claudeor routes through grok for this team only — see TeamPreset docstring.
+        runner_overrides={"claudeor": "grok"},
+    ),
+
+    "test_review": TeamPreset(
+        id="test_review",
+        name="Test-Review Team",
+        description="All seats audit existing tests for vacuity — can they fail when behavior breaks?",
+        assignments={
+            "codex": RoleId.TEST_ADVERSARY.value,
+            "gemini": RoleId.TEST_ADVERSARY.value,
+            "opencode": RoleId.TEST_ADVERSARY.value,
+            "claudeor": RoleId.TEST_ADVERSARY.value,
+            "aichat": RoleId.TEST_ADVERSARY.value,
+            "cursor": RoleId.TEST_ADVERSARY.value,
+        },
         runner_overrides={"claudeor": "grok"},
     ),
 
