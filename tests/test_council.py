@@ -698,3 +698,50 @@ def test_every_agent_has_a_config_attr():
     from owlex.config import config
 
     assert all(hasattr(config, agent.value) for agent in Agent)
+
+
+class TestCouncilReviewTeamComposition:
+    """`council_review` must FORCE the gemini seat onto grok.
+
+    The gemini CLI is installed and passes `is_configured`, so it lands in
+    `available`. If the override only retargeted UNAVAILABLE seats, the lens
+    would run on the auth-dead gemini seat and be lost. The long-form override
+    (a named runner) is what makes it forced — that is the property under test,
+    not merely that the participant ends up on grok.
+    """
+
+    def test_gemini_seat_is_forced_onto_grok_while_gemini_is_available(self):
+        by_seat = _resolve_participants(None, role_spec="council_review")
+
+        gemini = by_seat["gemini"]
+        assert gemini.is_substituted is True
+        assert gemini.donor == "grok"
+        assert gemini.runner.name == "grok"
+        assert gemini.model_override is None  # grok resolves its own model from config
+
+    def test_no_other_seat_is_substituted_by_the_team(self):
+        by_seat = _resolve_participants(None, role_spec="council_review")
+
+        for seat, p in by_seat.items():
+            if seat != "gemini":
+                assert p.is_substituted is False, f"{seat} unexpectedly substituted"
+
+    def test_each_live_seat_carries_its_own_distinct_lens(self):
+        by_seat = _resolve_participants(None, role_spec="council_review")
+
+        lenses = {seat: p.role.id for seat, p in by_seat.items()}
+        assert lenses["codex"] == "skeptic"
+        assert lenses["cursor"] == "architect"
+        assert lenses["gemini"] == "security"
+        assert lenses["claudeor"] == "perf"
+        assert len(set(lenses.values())) == len(lenses)  # no lens is duplicated
+
+    def test_global_env_override_still_applies_to_seats_the_team_does_not_name(self):
+        by_seat = _resolve_participants(
+            {"claudeor": ("codex", "gpt-5.6-sol")}, role_spec="council_review"
+        )
+
+        claudeor = by_seat["claudeor"]
+        assert claudeor.donor == "codex"
+        assert claudeor.model_override == "gpt-5.6-sol"
+        assert by_seat["gemini"].donor == "grok"  # team override untouched by it

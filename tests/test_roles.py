@@ -23,8 +23,11 @@ class TestTeamPresetRunnerOverrides:
         assert BUILTIN_TEAMS[team_id].runner_overrides == {"claudeor": "grok"}
 
     def test_every_other_builtin_team_carries_no_overrides(self):
+        # The three presets that deliberately carry an override: the two test
+        # teams route claudeor to grok, council_review routes the gemini seat.
+        with_overrides = {"test_spec", "test_review", "council_review"}
         for team_id, team in BUILTIN_TEAMS.items():
-            if team_id in {"test_spec", "test_review"}:
+            if team_id in with_overrides:
                 continue
             assert team.runner_overrides == {}, team_id
 
@@ -167,3 +170,30 @@ class TestTestReviewTeam:
 
         assert set(mapping) == set(COUNCIL_SEATS)
         assert all(role.id == RoleId.TEST_ADVERSARY.value for role in mapping.values())
+
+
+class TestCouncilReviewPreset:
+    """The general review panel used by the `council-review` skill."""
+
+    def test_lenses_are_assigned_per_seat(self):
+        from owlex.roles import BUILTIN_TEAMS
+
+        assert BUILTIN_TEAMS["council_review"].assignments == {
+            "codex": "skeptic",
+            "cursor": "architect",
+            "gemini": "security",
+            "claudeor": "perf",
+            "opencode": "maintainer",
+            "aichat": "testing",
+        }
+
+    def test_gemini_seat_is_routed_through_grok(self):
+        from owlex.roles import BUILTIN_TEAMS
+
+        assert BUILTIN_TEAMS["council_review"].runner_overrides == {"gemini": "grok"}
+
+    def test_no_seat_is_left_without_a_lens(self):
+        """A neutral seat here would silently contribute no framing at all."""
+        from owlex.roles import BUILTIN_TEAMS
+
+        assert "neutral" not in BUILTIN_TEAMS["council_review"].assignments.values()

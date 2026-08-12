@@ -611,6 +611,36 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
         runner_overrides={"claudeor": "grok"},
     ),
 
+    # General review panel for the `council-review` skill, which previously
+    # dispatched with no team at all: every seat resolved to NEUTRAL (an empty
+    # prefix — no framing reached the model) except claudeor, which picked up
+    # SKEPTIC from the role_spec-is-None branch in build_participants. That was
+    # a side effect, not a choice.
+    #
+    # Two deliberate decisions, do not "simplify" them away:
+    #   1. runner_overrides routes the GEMINI SEAT through grok. The gemini CLI
+    #      is auth-dead in this operator's environment, so its lens would be
+    #      silently lost; grok is the only donor left once aichat/opencode are
+    #      excluded (an excluded runner cannot serve as a donor either). This
+    #      buys a fourth live voice on a distinct model.
+    #   2. The lens order is not arbitrary. SKEPTIC / ARCHITECT / SECURITY are
+    #      load-bearing when reviewing a hypothesis, plan or implementation;
+    #      PERFORMANCE is situational and therefore sits on claudeor.
+    "council_review": TeamPreset(
+        id="council_review",
+        name="Council Review Team",
+        description="General review panel: the highest-value lenses concentrated on the seats that actually run",
+        assignments={
+            "codex": RoleId.SKEPTIC.value,
+            "cursor": RoleId.ARCHITECT.value,
+            "gemini": RoleId.SECURITY.value,
+            "claudeor": RoleId.PERFORMANCE.value,
+            "opencode": RoleId.MAINTAINER.value,
+            "aichat": RoleId.TESTING.value,
+        },
+        runner_overrides={"gemini": "grok"},
+    ),
+
     "dialectic": TeamPreset(
         id="dialectic",
         name="Dialectic (balanced troublemaker/peacemaker)",
