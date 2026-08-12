@@ -108,6 +108,17 @@ test specification from a flow + interface (rather than reviewing an implementat
 council_ask prompt="<describe the user flow + its interface>" team="test_spec"
 ```
 
+Builtin and user team presets may also carry `runner_overrides` (seat -> runner name), which route one of
+their own seats through a different runner — scoped to that team only, independent of the
+global `COUNCIL_SUBSTITUTION_MODELS` override. `test_spec` runs the `claudeor` seat through
+**grok** this way; every other builtin team is unaffected and still follows the global
+substitution config. User teams may define the same optional field in `~/.owlex/roles.json`;
+entries are validated independently.
+If `COUNCIL_DEFAULT_TEAM=test_spec` is set, that team-scoped routing applies to every council
+using the default; the override remains scoped to the selected team, not globally.
+Because the physical runner differs from the seat, its round-2 session is re-executed rather than
+resumed; this avoids resuming a session owned by another runner.
+
 ### Individual Agent Sessions
 
 | Tool | Description |
@@ -165,7 +176,7 @@ Council runs in the background. Start a query, keep working, check results later
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COUNCIL_EXCLUDE_AGENTS` | `` | Skip agents (e.g., `opencode,gemini,claudeor`) |
+| `COUNCIL_EXCLUDE_AGENTS` | `` | Skip agents entirely, including as donors (e.g., `opencode,gemini,claudeor`) |
 | `COUNCIL_DEFAULT_TEAM` | `` | Default team when none specified (empty = neutral) |
 | `COUNCIL_CLAUDE_OPINION` | `false` | Claude shares its opinion with agents by default |
 | `OWLEX_DEFAULT_TIMEOUT` | `300` | Timeout in seconds |

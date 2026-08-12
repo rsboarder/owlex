@@ -23,7 +23,7 @@ import pytest
 
 from owlex.council import Council
 from owlex.config import load_config
-from owlex.models import Agent, AgentResponse, CouncilRound, Task, TaskStatus
+from owlex.models import Agent, AgentResponse, COUNCIL_SEATS, CouncilRound, Task, TaskStatus
 from owlex.engine import AGENT_RUNNERS
 
 
@@ -318,6 +318,10 @@ def test_council_round_has_no_glm_field():
         f"CouncilRound fields changed — expected {expected_seats}, got {round_fields}. "
         "Do not add GLM or any non-seat field to CouncilRound (TASK-20 invariant)."
     )
+
+
+def test_council_seats_match_council_round_fields():
+    assert set(COUNCIL_SEATS) == set(CouncilRound.model_fields.keys())
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import json
 import pytest
 
 from owlex import store
-from owlex.models import AgentResponse, AgentTiming, CouncilMetadata, CouncilRound
+from owlex.models import Agent, AgentResponse, AgentTiming, COUNCIL_SEATS, CouncilMetadata, CouncilRound
 from owlex.prompts import anonymize_round_responses
 from owlex.server._council import (
     _anonymize_response_for_rating,
@@ -140,11 +140,12 @@ class TestRecordAgentScore:
 # === Blind-Rating Invariant: metadata sanitization ===
 
 # All known seat names — none of these may appear in the sanitized rater-facing payload.
-_ALL_SEATS = {"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"}
+_ALL_SEATS = set(COUNCIL_SEATS)
+_ALL_RUNNERS = {agent.value for agent in Agent}
 
 
 def _make_leaky_metadata() -> CouncilMetadata:
-    """Build a CouncilMetadata that would expose seat identity in all three leaking fields."""
+    """Build metadata that would expose seat identity in all four metadata fields."""
     return CouncilMetadata(
         total_duration_seconds=45.0,
         rounds=1,
@@ -157,6 +158,7 @@ def _make_leaky_metadata() -> CouncilMetadata:
             "Round 1: querying codex, gemini, opencode",
             "Roles assigned: codex=security",
         ],
+        warnings=["claudeor dropped: grok missing"],
     )
 
 
@@ -175,9 +177,9 @@ class TestSanitizeMetadataForRating:
     def test_no_seat_name_leaks_in_serialized_payload(self):
         sanitized = _sanitize_metadata_for_rating(_make_leaky_metadata())
         serialized = json.dumps(sanitized)
-        for seat in _ALL_SEATS:
-            assert seat not in serialized, (
-                f"Seat name '{seat}' found in sanitized metadata — "
+        for identifier in _ALL_SEATS | _ALL_RUNNERS:
+            assert identifier not in serialized, (
+                f"Identifier '{identifier}' found in sanitized metadata — "
                 "blind-rating invariant violated"
             )
 

@@ -11,11 +11,15 @@ Supports three modes of role specification:
 from __future__ import annotations
 
 import json
+import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Sequence, TypeAlias
+
+from .config import KNOWN_RUNNERS
+from .models import COUNCIL_SEATS
 
 
 class RoleId(str, Enum):
@@ -63,12 +67,35 @@ class RoleDefinition:
 
 @dataclass(frozen=True)
 class TeamPreset:
-    """Predefined team composition with role assignments."""
+    """Predefined team composition with role assignments.
+
+    ``runner_overrides`` (seat -> runner name, e.g. ``{"claudeor": "grok"}``)
+    lets a team preset force one of its own seats through a different runner,
+    independent of the global ``COUNCIL_SUBSTITUTION_MODELS`` env override.
+    It names the RUNNER only, never a model id — the runner resolves its own
+    model from its own config (e.g. ``GrokRunner`` falls back to
+    ``config.grok.model`` / ``OWLEX_GROK_MODEL``). Pinning a model id here
+    would create a second, non-env pinning site — see
+    docs/solutions/external-tools/cli-catalog-rotation-needs-health-check.md.
+
+    Precedence: when this team is the active role spec, its runner_overrides
+    win over a ``COUNCIL_SUBSTITUTION_MODELS`` entry for the SAME seat; seats
+    it does not name still fall back to the global override / normal
+    availability logic. See ``Council.build_participants``.
+
+    A runner override changes the physical runner, so the participant remains
+    marked substituted in later rounds. Round-2 session resume is intentionally
+    skipped for that seat because resuming a session owned by a different
+    runner is unsafe; round 2 re-executes instead.
+    """
     id: str
     name: str
     description: str
     # Maps agent name -> role_id (e.g., {"codex": "security", "gemini": "perf"})
     assignments: dict[str, str]
+    # Maps seat -> runner name (e.g., {"claudeor": "grok"}). Deliberately no
+    # model string — see class docstring.
+    runner_overrides: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -76,15 +103,73 @@ class TeamPreset:
             "name": self.name,
             "description": self.description,
             "assignments": dict(self.assignments),
+            "runner_overrides": dict(self.runner_overrides),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> TeamPreset:
+        raw_overrides = data.get("runner_overrides", {})
+        runner_overrides: dict[str, str] = {}
+        if isinstance(raw_overrides, dict):
+            for raw_seat, runner_name in raw_overrides.items():
+                if not isinstance(raw_seat, str):
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': seat {raw_seat!r} is not "
+                        "a valid council seat; override skipped",
+                        file=sys.stderr,
+                    )
+                    continue
+                seat = raw_seat.strip().lower()
+                if seat not in COUNCIL_SEATS:
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': seat '{raw_seat}' is not "
+                        "a valid council seat; override skipped",
+                        file=sys.stderr,
+                    )
+                    continue
+                if not isinstance(runner_name, str):
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': runner {runner_name!r} for "
+                        f"seat '{raw_seat}' is not a string; override skipped",
+                        file=sys.stderr,
+                    )
+                    continue
+                runner = runner_name.strip().lower()
+                if runner not in KNOWN_RUNNERS:
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': runner {runner_name!r} for "
+                        f"seat '{raw_seat}' is not one of {sorted(KNOWN_RUNNERS)}; "
+                        f"override skipped",
+                        file=sys.stderr,
+                    )
+                    continue
+                if seat == runner:
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': runner '{runner_name}' "
+                        f"for seat '{raw_seat}' is the same as the seat; override skipped",
+                        file=sys.stderr,
+                    )
+                    continue
+                if seat in runner_overrides:
+                    print(
+                        f"[WARNING] Team '{data.get('id')}': normalized seat '{raw_seat}' "
+                        "replaces an earlier runner override",
+                        file=sys.stderr,
+                    )
+                runner_overrides[seat] = runner
+        else:
+            print(
+                f"[WARNING] Team '{data.get('id')}': 'runner_overrides' must be an "
+                f"object, got {type(raw_overrides).__name__}; ignoring",
+                file=sys.stderr,
+            )
+
         return cls(
             id=data["id"],
             name=data["name"],
             description=data["description"],
             assignments=data["assignments"],
+            runner_overrides=runner_overrides,
         )
 
 
@@ -409,6 +494,8 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
             "aichat": RoleId.EDGE_CASE_ADVERSARY.value,
             "cursor": RoleId.EDGE_CASE_ADVERSARY.value,
         },
+        # claudeor routes through grok for this team only — see TeamPreset docstring.
+        runner_overrides={"claudeor": "grok"},
     ),
 
     "dialectic": TeamPreset(
@@ -429,8 +516,14 @@ BUILTIN_TEAMS: dict[str, TeamPreset] = {
 
 # === User Config Loading ===
 
-USER_CONFIG_DIR = Path.home() / ".owlex"
-USER_ROLES_FILE = USER_CONFIG_DIR / "roles.json"
+def _user_roles_file() -> Path:
+    return Path(os.environ.get("OWLEX_HOME", str(Path.home() / ".owlex"))) / "roles.json"
+
+
+# Compatibility names for callers that import these paths. Role loading uses
+# _user_roles_file() at call time so OWLEX_HOME changes are respected.
+USER_ROLES_FILE = _user_roles_file()
+USER_CONFIG_DIR = USER_ROLES_FILE.parent
 
 
 def load_user_roles() -> tuple[dict[str, RoleDefinition], dict[str, TeamPreset]]:
@@ -453,10 +546,15 @@ def load_user_roles() -> tuple[dict[str, RoleDefinition], dict[str, TeamPreset]]
                 "id": "my_team",
                 "name": "My Team",
                 "description": "...",
-                "assignments": {"codex": "security", "gemini": "my_custom_role"}
+                "assignments": {"codex": "security", "gemini": "my_custom_role"},
+                "runner_overrides": {"claudeor": "grok"}
             }
         }
     }
+
+    ``runner_overrides`` is optional for user teams. Its entries are normalized
+    and validated independently, so an invalid entry is skipped without
+    discarding the team.
 
     Note: The role's "id" field MUST match the dict key. Mismatches are skipped with a warning.
     Invalid entries are skipped individually (per-entry validation) rather than failing the whole file.
@@ -464,29 +562,30 @@ def load_user_roles() -> tuple[dict[str, RoleDefinition], dict[str, TeamPreset]]
     Returns:
         Tuple of (roles_dict, teams_dict)
     """
-    if not USER_ROLES_FILE.exists():
+    roles_file = _user_roles_file()
+    if not roles_file.exists():
         return {}, {}
 
     try:
-        with open(USER_ROLES_FILE) as f:
+        with open(roles_file) as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        print(f"[WARNING] Failed to parse {USER_ROLES_FILE}: {e}", file=sys.stderr)
+        print(f"[WARNING] Failed to parse {roles_file}: {e}", file=sys.stderr)
         return {}, {}
 
     # Validate top-level structure
     if not isinstance(data, dict):
-        print(f"[WARNING] {USER_ROLES_FILE} must be a JSON object, got {type(data).__name__}", file=sys.stderr)
+        print(f"[WARNING] {roles_file} must be a JSON object, got {type(data).__name__}", file=sys.stderr)
         return {}, {}
 
     roles_data = data.get("roles", {})
     if not isinstance(roles_data, dict):
-        print(f"[WARNING] 'roles' in {USER_ROLES_FILE} must be an object, got {type(roles_data).__name__}", file=sys.stderr)
+        print(f"[WARNING] 'roles' in {roles_file} must be an object, got {type(roles_data).__name__}", file=sys.stderr)
         roles_data = {}
 
     teams_data = data.get("teams", {})
     if not isinstance(teams_data, dict):
-        print(f"[WARNING] 'teams' in {USER_ROLES_FILE} must be an object, got {type(teams_data).__name__}", file=sys.stderr)
+        print(f"[WARNING] 'teams' in {roles_file} must be an object, got {type(teams_data).__name__}", file=sys.stderr)
         teams_data = {}
 
     roles = {}
@@ -496,13 +595,13 @@ def load_user_roles() -> tuple[dict[str, RoleDefinition], dict[str, TeamPreset]]
             # Enforce that dict key matches the role's id field
             if role.id != role_key:
                 print(
-                    f"[WARNING] Role key '{role_key}' does not match id '{role.id}' in {USER_ROLES_FILE}, skipping",
+                    f"[WARNING] Role key '{role_key}' does not match id '{role.id}' in {roles_file}, skipping",
                     file=sys.stderr,
                 )
                 continue
             roles[role_key] = role
         except (KeyError, TypeError) as e:
-            print(f"[WARNING] Invalid role '{role_key}' in {USER_ROLES_FILE}: {e}", file=sys.stderr)
+            print(f"[WARNING] Invalid role '{role_key}' in {roles_file}: {e}", file=sys.stderr)
             continue
 
     teams = {}
@@ -512,13 +611,13 @@ def load_user_roles() -> tuple[dict[str, RoleDefinition], dict[str, TeamPreset]]
             # Enforce that dict key matches the team's id field
             if team.id != team_key:
                 print(
-                    f"[WARNING] Team key '{team_key}' does not match id '{team.id}' in {USER_ROLES_FILE}, skipping",
+                    f"[WARNING] Team key '{team_key}' does not match id '{team.id}' in {roles_file}, skipping",
                     file=sys.stderr,
                 )
                 continue
             teams[team_key] = team
         except (KeyError, TypeError) as e:
-            print(f"[WARNING] Invalid team '{team_key}' in {USER_ROLES_FILE}: {e}", file=sys.stderr)
+            print(f"[WARNING] Invalid team '{team_key}' in {roles_file}: {e}", file=sys.stderr)
             continue
 
     return roles, teams
@@ -616,7 +715,7 @@ class RoleResolver:
     ) -> dict[str, RoleDefinition]:
         """Resolve explicit agent->role mapping."""
         # Validate for unknown agent keys (typos like "codexx")
-        known_agents = {"codex", "gemini", "opencode", "claudeor", "aichat", "cursor"}
+        known_agents = set(COUNCIL_SEATS)
         unknown_keys = set(mapping.keys()) - known_agents
         if unknown_keys:
             raise ValueError(f"Unknown agent(s) in role mapping: {', '.join(sorted(unknown_keys))}")
@@ -674,6 +773,21 @@ class RoleResolver:
     def get_team(self, team_id: str) -> TeamPreset | None:
         """Get a team preset by ID."""
         return self.teams.get(team_id)
+
+    def runner_overrides_for(self, spec: RoleSpec) -> dict[str, str]:
+        """Runner overrides (seat -> runner name) for the team preset named by ``spec``.
+
+        Returns ``{}`` for every ``spec`` shape except a ``str`` naming a team
+        that exists in this resolver's registry — a dict/list/None spec never
+        carries a team, and an unknown team name is a spec error surfaced
+        elsewhere by ``resolve()``, not silently defaulted here.
+        """
+        if not isinstance(spec, str):
+            return {}
+        team = self.teams.get(spec)
+        if team is None:
+            return {}
+        return dict(team.runner_overrides)
 
     def list_roles(self) -> list[str]:
         """List all available role IDs."""

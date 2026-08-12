@@ -191,9 +191,10 @@ def main():
                 log(f"[WARN] agreement health-check failed: {_e}")
         asyncio.create_task(_probe_agreement())
 
-        # Grok seat (aichat→grok substitution) auth/model probe. Catches
-        # "not signed in" before a council burns 5 other seats and scores
-        # aichat −1 for infra. Non-blocking; 30s covers cold start.
+        # Grok runner auth/model probe for runner-only substitutions such as
+        # test_spec's claudeor→grok route. Catches "not signed in" before a
+        # council burns 5 other seats or records a runner failure as infra.
+        # Non-blocking; 30s covers cold start.
         async def _probe_grok():
             try:
                 from ..agents.grok import probe_grok_seat

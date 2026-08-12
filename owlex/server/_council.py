@@ -13,7 +13,7 @@ from .. import store
 from ..config import config
 from ..council import Council
 from ..engine import DEFAULT_TIMEOUT
-from ..models import ErrorCode, TaskResponse
+from ..models import CouncilWarningReason, ErrorCode, TaskResponse
 from ..prompts import anonymize_round_responses
 
 # Seat-identity fields that would let a reader correlate the blind letters
@@ -21,6 +21,22 @@ from ..prompts import anonymize_round_responses
 # tool for post-rating analysis, but must NOT appear in the rater-facing
 # council_ask payload (blind-rating invariant — see prompts.anonymize_round_responses).
 _RATER_FACING_METADATA_DROP = ("timing", "slowest_agent", "log")
+_ALLOWED_WARNING_REASONS = frozenset(reason.value for reason in CouncilWarningReason)
+
+
+def _is_allowed_warning(summary: object) -> bool:
+    """Keep only the bounded warning shape emitted by Council."""
+    if not isinstance(summary, str):
+        return False
+    count, separator, detail = summary.partition(" ")
+    if not separator or not count.isascii() or not count.isdigit() or int(count) < 1:
+        return False
+    kind, separator, reason = detail.partition(": ")
+    return (
+        separator == ": "
+        and kind in {"seat dropped", "seats dropped"}
+        and reason in _ALLOWED_WARNING_REASONS
+    )
 
 
 def _sanitize_metadata_for_rating(metadata) -> dict:
@@ -30,6 +46,7 @@ def _sanitize_metadata_for_rating(metadata) -> dict:
     d = metadata.model_dump()
     for k in _RATER_FACING_METADATA_DROP:
         d.pop(k, None)
+    d["warnings"] = [warning for warning in d.get("warnings", []) if _is_allowed_warning(warning)]
     return d
 
 
