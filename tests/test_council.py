@@ -20,7 +20,7 @@ from owlex.models import (
     TaskStatus,
 )
 from owlex.engine import codex_runner, gemini_runner
-from owlex.roles import BUILTIN_ROLES, BUILTIN_TEAMS, RoleResolver, TeamPreset
+from owlex.roles import BUILTIN_ROLES, BUILTIN_TEAMS, RoleId, RoleResolver, TeamPreset
 from owlex.server._council import _sanitize_metadata_for_rating
 
 
@@ -111,6 +111,30 @@ class TestCouncilRound1:
         assert response.round_1.codex.status == "completed"
         assert response.round_1.gemini.status == "completed"
         assert response.round_1.opencode.status == "completed"
+
+    async def test_test_review_injects_role_prefix_for_every_seat(self, mock_engine, mock_config):
+        prompts = {}
+
+        async def mock_run_agent(task, runner, mode="exec", prompt="", **kwargs):
+            prompts[task.command] = prompt
+            task.status = TaskStatus.COMPLETED.value
+            task.result = f"{runner.name.title()} Output:\n\n{runner.name.title()} response"
+            task.completion_time = datetime.now()
+
+        mock_engine.run_agent = mock_run_agent
+
+        council = Council()
+        response = await council.deliberate(
+            prompt="Review existing tests",
+            roles="test_review",
+            deliberate=False,
+            timeout=10,
+        )
+
+        role_prefix = BUILTIN_ROLES[RoleId.TEST_ADVERSARY.value].round_1_prefix
+        assert response.roles == {seat: RoleId.TEST_ADVERSARY.value for seat in COUNCIL_SEATS}
+        assert set(prompts) == {f"council_{seat}" for seat in COUNCIL_SEATS}
+        assert all(role_prefix in prompt for prompt in prompts.values())
 
     async def test_handles_timeout(self, mock_engine, mock_config):
         """Should handle agent timeout gracefully."""
@@ -443,8 +467,9 @@ class TestBuildParticipantsTeamRunnerOverrides:
     override or the seats the team doesn't name.
     """
 
-    def test_test_spec_routes_claudeor_through_grok(self):
-        by_seat = _resolve_participants(None, role_spec="test_spec")
+    @pytest.mark.parametrize("team_id", ("test_spec", "test_review"))
+    def test_test_teams_route_claudeor_through_grok(self, team_id):
+        by_seat = _resolve_participants(None, role_spec=team_id)
         claudeor = by_seat["claudeor"]
         assert claudeor.is_substituted is True
         assert claudeor.donor == "grok"

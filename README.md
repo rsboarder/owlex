@@ -71,6 +71,7 @@ Agents can operate with specialist perspectives that shape their analysis:
 | `dx` | Developer experience - ergonomics, documentation, errors |
 | `testing` | Testing specialist - coverage, strategies, edge cases |
 | `edge_case_adversary` | Adversarial test designer - enumerate breaking scenarios from the interface as a structured test spec |
+| `test_adversary` | Test auditor - identify existing tests that cannot fail when behavior breaks |
 | `neutral` | No role injection (default) |
 
 **Assign roles explicitly:**
@@ -96,10 +97,14 @@ Predefined role combinations for common scenarios:
 | `balanced` | security | perf | maintainer | dx | testing |
 | `optimal` | maintainer | architect | dx | skeptic | perf |
 | `test_spec` | edge_case_adversary | edge_case_adversary | edge_case_adversary | edge_case_adversary | edge_case_adversary |
+| `test_review` | test_adversary | test_adversary | test_adversary | test_adversary | test_adversary |
 
 ```
 council_ask prompt="Is this design secure?" team="security_audit"
 ```
+
+`test_spec` is for designing a test specification before tests exist.
+`test_review` is for auditing tests that already exist for vacuity.
 
 The `test_spec` team focuses the whole council on **generating** an exhaustive edge-case
 test specification from a flow + interface (rather than reviewing an implementation):
@@ -110,8 +115,8 @@ council_ask prompt="<describe the user flow + its interface>" team="test_spec"
 
 Builtin and user team presets may also carry `runner_overrides` (seat -> runner name), which route one of
 their own seats through a different runner — scoped to that team only, independent of the
-global `COUNCIL_SUBSTITUTION_MODELS` override. `test_spec` runs the `claudeor` seat through
-**grok** this way; every other builtin team is unaffected and still follows the global
+global `COUNCIL_SUBSTITUTION_MODELS` override. `test_spec` and `test_review` run the `claudeor`
+seat through **grok** this way; every other builtin team is unaffected and still follows the global
 substitution config. User teams may define the same optional field in `~/.owlex/roles.json`;
 entries are validated independently.
 If `COUNCIL_DEFAULT_TEAM=test_spec` is set, that team-scoped routing applies to every council

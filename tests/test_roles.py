@@ -8,7 +8,7 @@ import pytest
 
 from owlex.config import KNOWN_RUNNERS
 from owlex.models import COUNCIL_SEATS
-from owlex.roles import BUILTIN_TEAMS, RoleResolver, TeamPreset, load_user_roles
+from owlex.roles import BUILTIN_ROLES, BUILTIN_TEAMS, RoleId, RoleResolver, TeamPreset, load_user_roles
 
 
 class TestTeamPresetRunnerOverrides:
@@ -18,12 +18,13 @@ class TestTeamPresetRunnerOverrides:
             assert set(team.runner_overrides.values()) <= KNOWN_RUNNERS
             assert all(seat != runner for seat, runner in team.runner_overrides.items())
 
-    def test_test_spec_carries_claudeor_grok_override(self):
-        assert BUILTIN_TEAMS["test_spec"].runner_overrides == {"claudeor": "grok"}
+    @pytest.mark.parametrize("team_id", ("test_spec", "test_review"))
+    def test_test_teams_carry_claudeor_grok_override(self, team_id):
+        assert BUILTIN_TEAMS[team_id].runner_overrides == {"claudeor": "grok"}
 
     def test_every_other_builtin_team_carries_no_overrides(self):
         for team_id, team in BUILTIN_TEAMS.items():
-            if team_id == "test_spec":
+            if team_id in {"test_spec", "test_review"}:
                 continue
             assert team.runner_overrides == {}, team_id
 
@@ -129,8 +130,9 @@ class TestRunnerOverridesFor:
     def _resolver() -> RoleResolver:
         return RoleResolver(roles={}, teams=dict(BUILTIN_TEAMS))
 
-    def test_returns_overrides_for_team_that_has_them(self):
-        assert self._resolver().runner_overrides_for("test_spec") == {"claudeor": "grok"}
+    @pytest.mark.parametrize("team_id", ("test_spec", "test_review"))
+    def test_returns_overrides_for_team_that_has_them(self, team_id):
+        assert self._resolver().runner_overrides_for(team_id) == {"claudeor": "grok"}
 
     def test_returns_empty_for_team_without_overrides(self):
         assert self._resolver().runner_overrides_for("code_review") == {}
@@ -151,3 +153,17 @@ class TestRunnerOverridesFor:
         overrides = self._resolver().runner_overrides_for("test_spec")
         overrides["codex"] = "grok"
         assert BUILTIN_TEAMS["test_spec"].runner_overrides == {"claudeor": "grok"}
+
+
+class TestTestReviewTeam:
+    def test_test_adversary_role_has_nonempty_prefixes(self):
+        role = BUILTIN_ROLES[RoleId.TEST_ADVERSARY.value]
+        assert role.round_1_prefix.strip()
+        assert role.round_2_prefix.strip()
+
+    def test_resolves_test_adversary_for_every_council_seat(self):
+        resolver = RoleResolver(roles=dict(BUILTIN_ROLES), teams=dict(BUILTIN_TEAMS))
+        mapping = resolver.resolve("test_review", COUNCIL_SEATS)
+
+        assert set(mapping) == set(COUNCIL_SEATS)
+        assert all(role.id == RoleId.TEST_ADVERSARY.value for role in mapping.values())
