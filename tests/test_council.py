@@ -3,13 +3,25 @@ Tests for council orchestration logic with mocked engine.
 """
 
 import asyncio
+import dataclasses
+import json
+import re
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from owlex.council import Council
-from owlex.models import Task, TaskStatus
+from owlex.council import Council, _display_name
+from owlex.models import (
+    Agent,
+    COUNCIL_SEATS,
+    CouncilRound,
+    CouncilWarningReason,
+    Task,
+    TaskStatus,
+)
 from owlex.engine import codex_runner, gemini_runner
+from owlex.roles import BUILTIN_ROLES, BUILTIN_TEAMS, RoleResolver, TeamPreset
+from owlex.server._council import _sanitize_metadata_for_rating
 
 
 @pytest.fixture
@@ -293,6 +305,69 @@ class TestCouncilConfig:
             assert search_setting is False
 
 
+def _resolve_participants(
+    substitution_models,
+    role_spec=None,
+    resolver=None,
+    which=None,
+    configured=None,
+    exclude_agents=frozenset(),
+    return_council=False,
+):
+    from contextlib import ExitStack
+    from owlex.engine import AGENT_RUNNERS
+    from owlex.config import config as real_config
+
+    new_council = dataclasses.replace(
+        real_config.council,
+        substitution_models=substitution_models,
+        exclude_agents=exclude_agents,
+    )
+    fake_cfg = dataclasses.replace(real_config, council=new_council)
+
+    with ExitStack() as stack:
+        # Make every native CLI appear installed + configured.
+        stack.enter_context(patch(
+            "owlex.council.shutil.which",
+            side_effect=which or (lambda _command: "/usr/bin/fake"),
+        ))
+        for runner in AGENT_RUNNERS.values():
+            if isinstance(configured, dict):
+                runner_configured = configured.get(runner.name, True)
+            elif configured is None:
+                runner_configured = True
+            else:
+                runner_configured = configured
+            stack.enter_context(patch.object(
+                type(runner), "is_configured",
+                new_callable=lambda value=runner_configured: property(lambda self: value),
+            ))
+        stack.enter_context(patch("owlex.council.config", fake_cfg))
+        resolver = resolver or RoleResolver(
+            roles=dict(BUILTIN_ROLES), teams=dict(BUILTIN_TEAMS),
+        )
+        council = Council(role_resolver=resolver)
+        parts = council.build_participants(role_spec)
+    by_seat = {p.seat: p for p in parts}
+    return (council, by_seat) if return_council else by_seat
+
+
+def _build_result(council, by_seat):
+    return council._build_outcome(
+        prompt="p",
+        working_directory=None,
+        round_1=CouncilRound(),
+        round_2=None,
+        participants=list(by_seat.values()),
+        council_start=datetime.now(),
+        deliberate=False,
+        critique=False,
+        agreement_score=None,
+        agreement_reason=None,
+        claude_opinion=None,
+    )
+
+
 class TestBuildParticipantsSubstitutionOverride:
     """COUNCIL_SUBSTITUTION_MODELS with an explicit runner must force substitution
     even when the seat's own CLI is installed.
@@ -303,34 +378,8 @@ class TestBuildParticipantsSubstitutionOverride:
     failed every council despite a valid config entry.
     """
 
-    @staticmethod
-    def _resolve(substitution_models):
-        import dataclasses
-        from contextlib import ExitStack
-        from owlex.engine import AGENT_RUNNERS
-        from owlex.config import config as real_config
-
-        new_council = dataclasses.replace(
-            real_config.council,
-            substitution_models=substitution_models,
-            exclude_agents=frozenset(),
-        )
-        fake_cfg = dataclasses.replace(real_config, council=new_council)
-
-        with ExitStack() as stack:
-            # Make every native CLI appear installed + configured.
-            stack.enter_context(patch("owlex.council.shutil.which", return_value="/usr/bin/fake"))
-            for runner in AGENT_RUNNERS.values():
-                stack.enter_context(patch.object(
-                    type(runner), "is_configured",
-                    new_callable=lambda: property(lambda self: True),
-                ))
-            stack.enter_context(patch("owlex.council.config", fake_cfg))
-            parts = Council().build_participants()
-        return {p.seat: p for p in parts}
-
     def test_explicit_runner_override_forces_substitution_for_available_seat(self):
-        by_seat = self._resolve({"gemini": ("opencode", "zai/glm-5.2")})
+        by_seat = _resolve_participants({"gemini": ("opencode", "zai/glm-5.2")})
         gem = by_seat["gemini"]
         assert gem.is_substituted is True
         assert gem.donor == "opencode"
@@ -340,7 +389,7 @@ class TestBuildParticipantsSubstitutionOverride:
         assert by_seat["opencode"].is_substituted is False
 
     def test_available_seat_without_override_stays_native(self):
-        by_seat = self._resolve(None)
+        by_seat = _resolve_participants(None)
         assert by_seat["gemini"].is_substituted is False
         assert by_seat["gemini"].model_override is None
 
@@ -353,8 +402,274 @@ class TestBuildParticipantsSubstitutionOverride:
         seat, so it always fell through to the default donor (codex), and the
         model override (grok-4.5) got handed to codex instead of grok.
         """
-        by_seat = self._resolve({"aichat": ("grok", "grok-4.5")})
+        by_seat = _resolve_participants({"aichat": ("grok", "grok-4.5")})
         p = by_seat["aichat"]
         assert p.runner.name == "grok"
         assert p.model_override == "grok-4.5"
         assert p.runner.output_prefix == "Grok Output"
+
+    def test_named_donor_must_be_configured(self):
+        by_seat = _resolve_participants(
+            {"codex": ("claudeor", None)},
+            configured={"claudeor": False},
+        )
+        assert "codex" not in by_seat
+        assert all(p.runner.name != "claudeor" for p in by_seat.values())
+
+    def test_named_excluded_seat_cannot_be_a_donor(self):
+        by_seat = _resolve_participants(
+            {"codex": ("gemini", None)},
+            exclude_agents=frozenset({"gemini"}),
+        )
+        assert "codex" not in by_seat
+        assert "gemini" not in by_seat
+        assert all(p.runner.name != "gemini" for p in by_seat.values())
+
+    def test_excluded_non_seat_runner_cannot_be_a_donor(self):
+        council, by_seat = _resolve_participants(
+            None,
+            role_spec="test_spec",
+            exclude_agents=frozenset({"grok"}),
+            return_council=True,
+        )
+        assert "claudeor" not in by_seat
+        assert all(p.runner.name != "grok" for p in by_seat.values())
+        assert len(council._warning_summary()) == 1
+
+
+class TestBuildParticipantsTeamRunnerOverrides:
+    """TeamPreset.runner_overrides route ONE seat through a different runner,
+    scoped to that team, without touching the global COUNCIL_SUBSTITUTION_MODELS
+    override or the seats the team doesn't name.
+    """
+
+    def test_test_spec_routes_claudeor_through_grok(self):
+        by_seat = _resolve_participants(None, role_spec="test_spec")
+        claudeor = by_seat["claudeor"]
+        assert claudeor.is_substituted is True
+        assert claudeor.donor == "grok"
+        assert claudeor.runner.name == "grok"
+        # Runner-only override: no model string is pinned in the team preset.
+        assert claudeor.model_override is None
+
+    def test_test_spec_leaves_other_seats_native(self):
+        by_seat = _resolve_participants(None, role_spec="test_spec")
+        for seat in COUNCIL_SEATS:
+            if seat == "claudeor":
+                continue
+            assert by_seat[seat].is_substituted is False
+
+    def test_code_review_team_unaffected_by_new_field(self):
+        """A global COUNCIL_SUBSTITUTION_MODELS-style override for claudeor
+        still applies under a team that carries no runner_overrides of its own.
+        """
+        by_seat = _resolve_participants(
+            {"claudeor": ("opencode", "zai/glm-5.2")}, role_spec="code_review",
+        )
+        claudeor = by_seat["claudeor"]
+        assert claudeor.is_substituted is True
+        assert claudeor.donor == "opencode"
+        assert claudeor.model_override == "zai/glm-5.2"
+
+    def test_no_role_spec_unaffected_by_new_field(self):
+        by_seat = _resolve_participants(
+            {"claudeor": ("opencode", "zai/glm-5.2")}, role_spec=None,
+        )
+        claudeor = by_seat["claudeor"]
+        assert claudeor.is_substituted is True
+        assert claudeor.donor == "opencode"
+        assert claudeor.model_override == "zai/glm-5.2"
+
+    def test_unknown_runner_in_team_override_drops_the_seat(self):
+        """An unknown runner name in a team override must skip the seat —
+        never silently reroute it onto an unrelated donor. Mirrors the
+        existing COUNCIL_SUBSTITUTION_MODELS unknown-runner behavior.
+        """
+        import dataclasses
+        bogus_team = dataclasses.replace(
+            BUILTIN_TEAMS["test_spec"], runner_overrides={"claudeor": "not_a_real_runner"},
+        )
+        base = RoleResolver(roles=dict(BUILTIN_ROLES), teams=dict(BUILTIN_TEAMS))
+        teams = dict(base.teams)
+        teams["test_spec"] = bogus_team
+        resolver = RoleResolver(roles=base.roles, teams=teams)
+
+        by_seat = _resolve_participants(
+            None, role_spec="test_spec", resolver=resolver,
+        )
+        assert "claudeor" not in by_seat
+        for seat in COUNCIL_SEATS:
+            if seat == "claudeor":
+                continue
+            assert seat in by_seat
+            assert by_seat[seat].is_substituted is False
+
+    def test_team_override_normalizes_case_and_whitespace(self):
+        data = BUILTIN_TEAMS["code_review"].to_dict()
+        data["id"] = "normalized"
+        data["runner_overrides"] = {" ClaudeOR ": " Grok "}
+        team = TeamPreset.from_dict(data)
+        base = RoleResolver(roles=dict(BUILTIN_ROLES), teams=dict(BUILTIN_TEAMS))
+        teams = dict(base.teams)
+        teams[team.id] = team
+        resolver = RoleResolver(roles=base.roles, teams=teams)
+
+        by_seat = _resolve_participants(None, role_spec="normalized", resolver=resolver)
+        assert by_seat["claudeor"].runner.name == "grok"
+
+    def test_team_override_wins_over_global_model_override(self):
+        by_seat = _resolve_participants(
+            {"claudeor": ("opencode", "zai/glm-5.2")},
+            role_spec="test_spec",
+        )
+        assert by_seat["claudeor"].runner.name == "grok"
+        assert by_seat["claudeor"].model_override is None
+
+    def test_missing_team_runner_is_reported_in_result_without_identifiers(self):
+        from owlex.engine import AGENT_RUNNERS
+
+        def which(command):
+            return None if command == AGENT_RUNNERS[Agent.GROK].cli_command else "/usr/bin/fake"
+
+        council, by_seat = _resolve_participants(
+            None,
+            role_spec="test_spec",
+            which=which,
+            return_council=True,
+        )
+        assert "claudeor" not in by_seat
+
+        response = _build_result(council, by_seat)
+        assert len(response.metadata.warnings) == 1
+
+        sanitized = _sanitize_metadata_for_rating(response.metadata)
+        assert len(sanitized["warnings"]) == 1
+        serialized = json.dumps(sanitized)
+        for identifier in (*COUNCIL_SEATS, Agent.GROK.value):
+            assert identifier not in serialized
+
+    def test_model_less_substitution_log_does_not_emit_none(self):
+        council, _ = _resolve_participants(None, role_spec="test_spec", return_council=True)
+        substitution_logs = [
+            entry for entry in council.log_entries
+            if entry.startswith("Substituting agents:")
+        ]
+        assert substitution_logs
+        assert all("None" not in entry for entry in substitution_logs)
+
+    def test_display_name_uses_donor_model_not_seat_model(self):
+        from owlex.config import config as real_config
+
+        by_seat = _resolve_participants(None, role_spec="test_spec")
+        fake_cfg = dataclasses.replace(
+            real_config,
+            claudeor=dataclasses.replace(real_config.claudeor, model="deepseek/deepseek-v3.2"),
+            grok=dataclasses.replace(real_config.grok, model="grok-4.5"),
+        )
+        with patch("owlex.council.config", fake_cfg):
+            display = _display_name(by_seat["claudeor"])
+        assert "grok-4.5" in display
+        assert "deepseek/deepseek-v3.2" not in display
+
+    def test_two_seats_on_one_donor_render_distinctly(self):
+        by_seat = _resolve_participants(
+            None,
+            configured={"aichat": False, "cursor": False},
+        )
+        assert _display_name(by_seat["aichat"]) != _display_name(by_seat["cursor"])
+
+    def test_no_donor_warning_is_reported_without_identifiers(self):
+        council, by_seat = _resolve_participants(
+            None,
+            configured=False,
+            return_council=True,
+        )
+        response = _build_result(council, by_seat)
+        assert len(response.metadata.warnings) == 1
+
+        sanitized = _sanitize_metadata_for_rating(response.metadata)
+        assert len(sanitized["warnings"]) == 1
+        serialized = json.dumps(sanitized)
+        for identifier in (*COUNCIL_SEATS, Agent.GROK.value):
+            assert identifier not in serialized
+
+    def test_every_warning_reason_survives_as_a_bounded_summary(self):
+        council = Council()
+        # Fallback failures leave the seat in the returned payload, so their
+        # reason must never enter the caller-facing dropped-seat enum.
+        assert "FALLBACK_RUNNER_UNAVAILABLE" not in CouncilWarningReason.__members__
+        for reason in CouncilWarningReason:
+            assert re.fullmatch(r"[a-z ]+", reason.value)
+            council.warn("detailed internal warning", reason=reason)
+
+        response = _build_result(council, {})
+        sanitized = _sanitize_metadata_for_rating(response.metadata)
+        assert len(sanitized["warnings"]) == len(CouncilWarningReason)
+        serialized = json.dumps(sanitized)
+        for identifier in (*COUNCIL_SEATS, Agent.GROK.value):
+            assert identifier not in serialized
+
+    def test_warn_rejects_unbounded_reason(self):
+        with pytest.raises(TypeError):
+            Council().warn("detailed internal warning", reason="seat leaked")  # type: ignore[arg-type]
+
+    def test_team_override_for_excluded_seat_is_ignored(self):
+        data = BUILTIN_TEAMS["code_review"].to_dict()
+        data["id"] = "excluded_override"
+        data["runner_overrides"] = {"gemini": "grok"}
+        team = TeamPreset.from_dict(data)
+        base = RoleResolver(roles=dict(BUILTIN_ROLES), teams=dict(BUILTIN_TEAMS))
+        teams = dict(base.teams)
+        teams[team.id] = team
+        resolver = RoleResolver(roles=base.roles, teams=teams)
+        assert resolver.runner_overrides_for(team.id) == {"gemini": "grok"}
+
+        by_seat = _resolve_participants(
+            None,
+            role_spec=team.id,
+            resolver=resolver,
+            exclude_agents=frozenset({"gemini"}),
+        )
+        assert "gemini" not in by_seat
+        assert all(p.runner.name != "grok" for p in by_seat.values())
+
+
+class TestFallbackAvailability:
+    @pytest.mark.asyncio
+    async def test_excluded_fallback_runner_is_not_started(self, mock_engine):
+        from owlex.config import config as real_config
+
+        fake_cfg = dataclasses.replace(
+            real_config,
+            gemini=dataclasses.replace(
+                real_config.gemini,
+                fallback_runner="cursor",
+                fallback_model="fallback-model",
+            ),
+            council=dataclasses.replace(
+                real_config.council,
+                exclude_agents=frozenset({"cursor"}),
+            ),
+        )
+        from owlex.engine import AGENT_RUNNERS
+
+        cursor = AGENT_RUNNERS[Agent.CURSOR]
+        with patch("owlex.council.shutil.which", return_value="/usr/bin/fake"), patch.object(
+            type(cursor),
+            "is_configured",
+            new_callable=lambda: property(lambda self: True),
+        ), patch("owlex.council.config", fake_cfg):
+            council = Council(task_engine=mock_engine)
+            result = await council._run_fallback(
+                "gemini", "gemini", "prompt", None, datetime.now(),
+            )
+
+        assert result == (None, None)
+        response = _build_result(council, {})
+        assert response.metadata.warnings == []
+
+
+def test_every_agent_has_a_config_attr():
+    from owlex.config import config
+
+    assert all(hasattr(config, agent.value) for agent in Agent)

@@ -43,6 +43,17 @@ class Agent(str, Enum):
     GROK = "grok"  # Grok CLI (xAI)
 
 
+class CouncilWarningReason(str, Enum):
+    """Bounded categories allowed in caller-facing council warnings."""
+
+    DECLARED_RUNNER_UNAVAILABLE = "declared runner unavailable"
+    NO_DONOR_AVAILABLE = "no donor available"
+
+
+# Logical council seats. GROK is a runner-only donor, not a native seat.
+COUNCIL_SEATS = tuple(agent.value for agent in Agent if agent is not Agent.GROK)
+
+
 @dataclass
 class Participant:
     """A council seat with its assigned runner and role.
@@ -152,6 +163,7 @@ class CouncilMetadata(BaseModel):
     total_duration_seconds: float
     rounds: int
     log: list[str] = Field(default_factory=list)  # Progress log entries
+    warnings: list[str] = Field(default_factory=list)  # Caller-facing degradation summaries
     timing: list[AgentTiming] = Field(default_factory=list)  # Per-agent timing, sorted slowest first
     slowest_agent: str | None = None  # Agent name that took the longest
 

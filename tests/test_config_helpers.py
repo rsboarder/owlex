@@ -3,7 +3,15 @@ from __future__ import annotations
 
 import pytest
 
-from owlex.config import _get_bool, _get_csv, _get_int, _get_str_or_none, _load_substitution_models
+from owlex.config import (
+    KNOWN_RUNNERS,
+    _get_bool,
+    _get_csv,
+    _get_int,
+    _get_str_or_none,
+    _load_substitution_models,
+)
+from owlex.models import Agent
 
 
 @pytest.fixture(autouse=True)
@@ -99,6 +107,9 @@ class TestGetCsv:
 
 
 class TestSubstitutionModels:
+    def test_known_runners_match_agent_enum(self):
+        assert KNOWN_RUNNERS == frozenset(agent.value for agent in Agent)
+
     def test_unset_returns_none(self):
         assert _load_substitution_models() is None
 

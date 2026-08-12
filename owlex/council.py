@@ -23,17 +23,19 @@ from .prompts import inject_role_prefix, build_deliberation_prompt_with_role
 from .roles import RoleSpec, RoleDefinition, RoleResolver, RoleId, get_resolver, BUILTIN_ROLES
 from .models import (
     Agent,
+    COUNCIL_SEATS,
     AgentResponse,
     AgentTiming,
     ClaudeOpinion,
     CouncilResponse,
     CouncilRound,
     CouncilMetadata,
+    CouncilWarningReason,
     Participant,
 )
 
 
-ALL_SEATS = ("codex", "gemini", "opencode", "claudeor", "aichat", "cursor")
+ALL_SEATS = COUNCIL_SEATS
 
 
 def _word_set(text: str, min_len: int = 5) -> set[str]:
@@ -49,16 +51,29 @@ def _log(msg: str):
 
 def _display_name(p: Participant) -> str:
     """Get display name for a participant, showing substitution if applicable."""
+    if p.is_substituted:
+        runner_config = getattr(config, p.runner.name, None)
+        actual_model = p.model_override or getattr(runner_config, "model", None)
+        via = actual_model or p.runner.cli_command
+        return f"{p.seat.title()} (via {via})"
     custom = {
         "claudeor": config.claudeor.model or "Claude/OpenRouter",
         "aichat": config.aichat.model or "AiChat",
         "cursor": config.cursor.model or "Cursor",
     }
-    name = custom.get(p.seat, p.seat.title())
-    if p.is_substituted:
-        via = p.model_override or p.runner.cli_command
-        name = f"{name} (via {via})"
-    return name
+    return custom.get(p.seat, p.seat.title())
+
+
+def _runner_is_available(runner_name: str, excluded: frozenset[str]) -> bool:
+    """Apply the native-seat availability gate to any registered runner."""
+    if runner_name in excluded:
+        return False
+    try:
+        agent = Agent(runner_name)
+    except ValueError:
+        return False
+    runner = AGENT_RUNNERS[agent]
+    return bool(shutil.which(runner.cli_command) and runner.is_configured)
 
 
 class Council:
@@ -82,12 +97,20 @@ class Council:
         self._engine: EnginePort = task_engine if task_engine is not None else engine
         self._resolver = role_resolver if role_resolver is not None else get_resolver()
         self.log_entries: list[str] = []
+        self._warning_counts: dict[CouncilWarningReason, int] = {}
         self.council_id: str = datetime.now().strftime("%H%M%S")
 
     def log(self, msg: str):
         """Add to log and print to stderr."""
         self.log_entries.append(msg)
         _log(msg)
+
+    def warn(self, msg: str, *, reason: CouncilWarningReason):
+        """Log a detailed warning and count its bounded caller-facing category."""
+        if not isinstance(reason, CouncilWarningReason):
+            raise TypeError("reason must be a CouncilWarningReason")
+        self.log(msg)
+        self._warning_counts[reason] = self._warning_counts.get(reason, 0) + 1
 
     async def notify(self, message: str, level: str = "info", progress: float | None = None):
         """Send notification to MCP client if context supports it.
@@ -110,8 +133,15 @@ class Council:
         """Build the complete participant list with runners, roles, and substitutions.
 
         This is the single source of truth for seat-to-runner mapping.
-        Can be called without starting a deliberation (e.g., for preview in server.py).
+        Can be called without starting a deliberation.
+
+        Precedence when ``role_spec`` names a team preset with its own
+        ``runner_overrides``: the team's override wins over a
+        ``COUNCIL_SUBSTITUTION_MODELS`` entry for the SAME seat; the global
+        override still applies to any seat the team does not name. See
+        ``TeamPreset.runner_overrides`` / ``RoleResolver.runner_overrides_for``.
         """
+        self._warning_counts.clear()
         excluded = config.council.exclude_agents
         seats = [s for s in ALL_SEATS if s not in excluded]
 
@@ -127,25 +157,36 @@ class Council:
         available = []
         unavailable = []
         for seat in seats:
-            runner = AGENT_RUNNERS[Agent(seat)]
-            if shutil.which(runner.cli_command) and runner.is_configured:
+            if _runner_is_available(seat, excluded):
                 available.append(seat)
             else:
                 unavailable.append(seat)
 
-        sub_overrides = config.council.substitution_models or {}
+        # Merge global (COUNCIL_SUBSTITUTION_MODELS) overrides with the active
+        # team preset's runner_overrides. A team override carries no model
+        # (runner name only — see TeamPreset docstring), so it's normalized
+        # into the same (runner, model) tuple shape with model=None; the
+        # runner's own model_override-or-config fallback (e.g. GrokRunner)
+        # then resolves it. Team entries are applied AFTER copying the global
+        # dict so they win per-seat, without touching seats the team doesn't
+        # name. Copy (not alias) config.council.substitution_models — it's a
+        # shared dict on a frozen dataclass, and .update() below would
+        # otherwise mutate it for every future council call.
+        sub_overrides: dict[str, tuple[str | None, str | None]] = dict(config.council.substitution_models or {})
+        team_runner_overrides = self._resolver.runner_overrides_for(role_spec)
+        sub_overrides.update({seat: (runner, None) for seat, runner in team_runner_overrides.items()})
 
-        # An explicit override that names a runner (seat:runner:model) forces
-        # substitution even when the seat's own CLI is installed. Otherwise an
-        # installed-but-broken binary (e.g. an auth-dead gemini that exits on
-        # IneligibleTierError) stays in `available`, runs natively, and the
-        # override is silently ignored — the seat then fails every council
-        # despite a valid COUNCIL_SUBSTITUTION_MODELS entry. Short-form overrides
-        # (seat:model, runner=None) do NOT force here; they only retarget an
-        # already-unavailable seat's donor/model.
+        # An explicit override that names a runner (seat:runner:model, or a
+        # team's seat:runner) forces substitution even when the seat's own CLI
+        # is installed. Otherwise an installed-but-broken binary (e.g. an
+        # auth-dead gemini that exits on IneligibleTierError) stays in
+        # `available`, runs natively, and the override is silently ignored —
+        # the seat then fails every council despite a valid override. Short-form
+        # overrides (seat:model, runner=None) do NOT force here; they only
+        # retarget an already-unavailable seat's donor/model.
         forced = [
             seat for seat in available
-            if (ov := sub_overrides.get(seat)) and len(ov) == 2 and ov[0] is not None
+            if (ov := sub_overrides.get(seat)) and ov[0] is not None
         ]
         forced_set = set(forced)
 
@@ -175,7 +216,7 @@ class Council:
             rr = 0  # round-robin index, advanced only for donor-less overrides
             for seat in to_substitute:
                 override = sub_overrides.get(seat)
-                if override and len(override) == 2:
+                if override:
                     runner_name, model = override
                     # Resolve the named runner: an available seat's own runner,
                     # or an installed non-seat runner (e.g. grok — a registered
@@ -184,23 +225,23 @@ class Council:
                     # was named at all (seat:model short form); an explicitly
                     # named runner that's neither wins skips the seat instead
                     # of silently rerouting its model onto an unrelated donor
-                    # (codex) — the exact failure _KNOWN_RUNNERS validation
+                    # (codex) — the exact failure KNOWN_RUNNERS validation
                     # exists to prevent.
-                    if runner_name and runner_name in available:
-                        donor = runner_name
-                    elif (
-                        runner_name
-                        and runner_name in {a.value for a in Agent}
-                        and shutil.which(AGENT_RUNNERS[Agent(runner_name)].cli_command)
-                    ):
+                    if runner_name and _runner_is_available(runner_name, excluded):
                         donor = runner_name
                     elif runner_name:
-                        self.log(f"Runner '{runner_name}' for {seat} is not available/installed, skipping")
+                        self.warn(
+                            f"Runner '{runner_name}' for {seat} is not available/installed, skipping",
+                            reason=CouncilWarningReason.DECLARED_RUNNER_UNAVAILABLE,
+                        )
                         continue
                     else:
                         donor = donor_pool[0] if donor_pool else None
                     if not donor:
-                        self.log(f"No donors available for {seat}, skipping")
+                        self.warn(
+                            f"No donors available for {seat}, skipping",
+                            reason=CouncilWarningReason.NO_DONOR_AVAILABLE,
+                        )
                         continue
                     participants.append(Participant(
                         seat=seat,
@@ -210,10 +251,16 @@ class Council:
                         model_override=model,
                         role=resolved_roles[seat],
                     ))
-                    subs.append(f"{seat}->{donor}({model})")
+                    substitution = f"{seat}->{donor}"
+                    if model:
+                        substitution += f"({model})"
+                    subs.append(substitution)
                 else:
                     if not donor_pool:
-                        self.log(f"No donors available for {seat}, skipping")
+                        self.warn(
+                            f"No donors available for {seat}, skipping",
+                            reason=CouncilWarningReason.NO_DONOR_AVAILABLE,
+                        )
                         continue
                     donor = donor_pool[rr % len(donor_pool)]
                     rr += 1
@@ -319,6 +366,12 @@ class Council:
             claude_opinion=claude_opinion,
             glm_escalation_response=glm_escalation_response,
         )
+
+    def _warning_summary(self) -> list[str]:
+        return [
+            f"{count} seat{'s' if count != 1 else ''} dropped: {reason.value}"
+            for reason, count in self._warning_counts.items()
+        ]
 
     # === deliberate() helpers ===
 
@@ -498,6 +551,7 @@ class Council:
                 total_duration_seconds=final_total_s,
                 rounds=rounds_count,
                 log=self.log_entries,
+                warnings=self._warning_summary(),
                 timing=timing,
                 slowest_agent=slowest,
             ),
@@ -698,7 +752,7 @@ class Council:
             self.log(f"Unknown fallback runner '{fallback_runner_name}' for {seat}")
             return None, None
 
-        if not shutil.which(fallback_runner.cli_command):
+        if not _runner_is_available(fallback_runner_name, config.council.exclude_agents):
             self.log(f"Fallback runner '{fallback_runner.cli_command}' not available for {seat}")
             return None, None
 

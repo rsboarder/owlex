@@ -19,8 +19,10 @@ def _isolate_owlex_home(tmp_path, monkeypatch):
     """Point OWLEX_HOME at a per-test tmp dir so the suite never writes to ~/.owlex."""
     monkeypatch.setenv("OWLEX_HOME", str(tmp_path / "owlex_home"))
     from owlex import derivations, store
+    from owlex.roles import reload_resolver
     store._reset_for_tests()
     derivations._reset_for_tests()
+    reload_resolver()
     yield
     store._reset_for_tests()
     derivations._reset_for_tests()

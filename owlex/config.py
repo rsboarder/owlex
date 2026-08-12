@@ -183,13 +183,14 @@ class GlmEscalationConfig:
 @dataclass(frozen=True)
 class CouncilConfig:
     """Configuration for council orchestration."""
-    exclude_agents: frozenset[str] = frozenset()  # Agents to exclude from council
+    # Agents that never run — neither as a seat nor as another seat's donor.
+    exclude_agents: frozenset[str] = frozenset()
     default_team: str | None = None  # Default team preset when no roles/team specified
     include_claude_opinion: bool = False  # Whether Claude should share its opinion by default
     substitution_donors: tuple[str, ...] = ("codex", "cursor")  # Preferred donors for unavailable agents
-    # Per-seat model overrides for substituted agents (seat:model pairs)
-    # When set, forces substitution through cursor runner (which supports --model)
-    substitution_models: dict[str, str] | None = None
+    # Per-seat substitution overrides: (runner | None, model | None).
+    # Team runner-only overrides use model=None; named runners are not limited to cursor.
+    substitution_models: dict[str, tuple[str | None, str | None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -223,10 +224,10 @@ class OwlexConfig:
 # Known runner identifiers (matches owlex.agents Agent enum). Used to
 # validate seat:runner:model entries up front instead of letting them
 # silently 600s-timeout when the runner doesn't recognize the model.
-_KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor", "grok"})
+KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor", "grok"})
 
 
-def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
+def _load_substitution_models() -> dict[str, tuple[str | None, str | None]] | None:
     """Parse COUNCIL_SUBSTITUTION_MODELS = ``seat:runner:model,seat:model,...``.
 
     Two forms per entry:
@@ -241,15 +242,15 @@ def _load_substitution_models() -> dict[str, tuple[str | None, str]] | None:
     raw = os.environ.get("COUNCIL_SUBSTITUTION_MODELS", "")
     if not raw.strip():
         return None
-    out: dict[str, tuple[str | None, str]] = {}
+    out: dict[str, tuple[str | None, str | None]] = {}
     for entry in raw.split(","):
         parts = [p.strip() for p in entry.strip().split(":")]
         if len(parts) == 3 and all(parts):
             seat, runner, model = parts
-            if runner.lower() not in _KNOWN_RUNNERS:
+            if runner.lower() not in KNOWN_RUNNERS:
                 print(
                     f"[WARNING] COUNCIL_SUBSTITUTION_MODELS: runner {runner!r} "
-                    f"is not one of {sorted(_KNOWN_RUNNERS)}; entry {entry!r} skipped",
+                    f"is not one of {sorted(KNOWN_RUNNERS)}; entry {entry!r} skipped",
                     file=sys.stderr, flush=True,
                 )
                 continue
