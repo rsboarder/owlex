@@ -1,6 +1,6 @@
 """
 Fast agreement scoring for auto-deliberation.
-Uses Codex CLI with gpt-5.5 (reasoning_effort=low) to judge whether R1 responses agree.
+Uses Codex CLI (reasoning_effort=low) to judge whether R1 responses agree.
 """
 
 import asyncio
@@ -11,8 +11,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from owlex.config import CODEX_DEFAULT_MODEL
 
-AGREEMENT_MODEL = os.getenv("OWLEX_AGREEMENT_MODEL", "gpt-5.5")
+
+AGREEMENT_MODEL = os.getenv("OWLEX_AGREEMENT_MODEL", CODEX_DEFAULT_MODEL)
 
 # Reasoning effort for the judge model. "low" is fast (~3-5s per call) and
 # empirically produces identical scores to "medium" on the agreement-judge
@@ -21,7 +23,7 @@ AGREEMENT_MODEL = os.getenv("OWLEX_AGREEMENT_MODEL", "gpt-5.5")
 AGREEMENT_REASONING = os.getenv("OWLEX_AGREEMENT_REASONING", "low")
 
 # Default per-call timeout. Bumped from 30s historically after cursor-agent
-# CLI buffering issues. With codex + gpt-5.5 + low reasoning the realistic
+# CLI buffering issues. With codex + low reasoning the realistic
 # wall-time is 3-5s, so 90s is generous headroom for a slow cold-start.
 DEFAULT_JUDGE_TIMEOUT = int(os.getenv("OWLEX_AGREEMENT_TIMEOUT", "90"))
 
@@ -223,7 +225,7 @@ async def score_agreement(
     timeout: int | None = None,
 ) -> tuple[float, str]:
     """
-    Score agreement between agent responses using Codex CLI + gpt-5.5.
+    Score agreement between agent responses using Codex CLI.
 
     Returns (score, reason) where score is 1.0-5.0.
     Falls back to term-overlap heuristic if the judge fails.

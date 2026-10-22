@@ -22,35 +22,35 @@ class TestConfigParsing:
             assert config_module.config.default_timeout == 600
 
     def test_default_timeout_invalid_string(self, capsys):
-        """Should fallback to 300 for invalid string."""
+        """Should fallback to the built-in default for an invalid string."""
         with patch.dict(os.environ, {"OWLEX_DEFAULT_TIMEOUT": "not_a_number"}):
             import importlib
             from owlex import config as config_module
             importlib.reload(config_module)
 
-            assert config_module.config.default_timeout == 300
+            assert config_module.config.default_timeout == 900
             captured = capsys.readouterr()
             assert "Invalid OWLEX_DEFAULT_TIMEOUT" in captured.err
 
     def test_default_timeout_negative(self, capsys):
-        """Should fallback to 300 for negative values."""
+        """Should fallback to the built-in default for negative values."""
         with patch.dict(os.environ, {"OWLEX_DEFAULT_TIMEOUT": "-100"}):
             import importlib
             from owlex import config as config_module
             importlib.reload(config_module)
 
-            assert config_module.config.default_timeout == 300
+            assert config_module.config.default_timeout == 900
             # Behavior assertion: a warning was emitted (don't pin exact text)
             assert "WARNING" in capsys.readouterr().err
 
     def test_default_timeout_zero(self, capsys):
-        """Should fallback to 300 for zero."""
+        """Should fallback to the built-in default for zero."""
         with patch.dict(os.environ, {"OWLEX_DEFAULT_TIMEOUT": "0"}):
             import importlib
             from owlex import config as config_module
             importlib.reload(config_module)
 
-            assert config_module.config.default_timeout == 300
+            assert config_module.config.default_timeout == 900
             # Behavior assertion: a warning was emitted (don't pin exact text)
             assert "WARNING" in capsys.readouterr().err
 

@@ -221,7 +221,9 @@ class OwlexConfig:
     council: CouncilConfig
     glm_blind: GlmBlindConfig
     glm_escalation: GlmEscalationConfig
-    default_timeout: int = 300
+    # Sized to the slowest seat: opencode measures p50=360s / p90=588s /
+    # max=824s on this workload, so a 450s ceiling killed 17 of 55 runs.
+    default_timeout: int = 900
 
     def print_warnings(self):
         """Print security warnings for dangerous configurations."""
@@ -240,6 +242,16 @@ class OwlexConfig:
 # validate seat:runner:model entries up front instead of letting them
 # silently 600s-timeout when the runner doesn't recognize the model.
 KNOWN_RUNNERS = frozenset({"codex", "gemini", "opencode", "claudeor", "aichat", "cursor", "grok"})
+
+
+# Codex model for owlex's OWN single-model calls (agreement judge,
+# second_opinion) — not a council seat, which carries its own model. Pinned in
+# one place because codex's catalog rotates and a dead pin degrades silently:
+# the judge falls back to the overlap heuristic and second_opinion just fails.
+# Keeping two independent defaults is how the 2026-10 rotation took down both
+# at once while only the judge was noticed. Per-call-site overrides remain
+# OWLEX_AGREEMENT_MODEL / OWLEX_SECOND_OPINION_MODEL.
+CODEX_DEFAULT_MODEL = os.environ.get("OWLEX_CODEX_MODEL", "gpt-5.6-sol")
 
 
 def _load_substitution_models() -> dict[str, tuple[str | None, str | None]] | None:
@@ -365,7 +377,7 @@ def load_config() -> OwlexConfig:
         council=council,
         glm_blind=glm_blind,
         glm_escalation=glm_escalation,
-        default_timeout=_get_int("OWLEX_DEFAULT_TIMEOUT", 300, min_value=1),
+        default_timeout=_get_int("OWLEX_DEFAULT_TIMEOUT", 900, min_value=1),
     )
 
 
