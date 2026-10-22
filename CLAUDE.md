@@ -100,7 +100,9 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
 | `OWLEX_GROK_EFFORT` | `medium` | Grok reasoning effort (`low`/`medium`/`high`) |
 | `OWLEX_GROK_OUTPUT_CONTRACT` | `true` | Append Verdict/Evidence/Risks/Recommendation suffix (Phase-0 A/B) |
 | `OWLEX_GROK_STRIP_TOOL_NARRATION` | `true` | Strip leading I'll/Pulling… monologue from final answers |
+| `OWLEX_GROK_ISOLATE_MCP` | `true` | Run grok with an empty `HOME` so it boots no MCP servers (seat + probe). `false` restores the pre-2026-08 stack |
 | `OWLEX_GROK_PROBE_TTL` | `86400` | Cache TTL (s) for successful grok seat startup probe |
+| `OWLEX_GROK_PROBE_FAIL_TTL` | `600` | Cache TTL (s) for a FAILED grok probe — bounds probe-storm rate on a broken seat |
 | `OWLEX_AGREEMENT_PROBE_TTL` | `86400` | Cache TTL (s) for successful agreement-judge model probe |
 
 ## Testing
@@ -115,3 +117,4 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
   - `tests/test_output_cap.py` — runaway-output kill.
   - `tests/test_heartbeat.py` — last_output_monotonic propagation.
   - `tests/test_recursion_fence.py` — OWLEX_COUNCIL_DEPTH inheritance.
+  - `tests/test_grok_probe.py` — grok probe must not boot grok's MCP stack, must not recurse into a nested owlex-server, and must reap its process group (TASK-23).
