@@ -103,7 +103,12 @@ existed at once and disagreed:
 
 Verified by `ps eww` on the live server: `settings.json`-only keys
 (`DELEGATION_HINT_OFF`, `HANDOVER_TRIGGER_PCT`) were absent from its
-environment while `~/.claude.json`'s two keys were present.
+environment while `~/.claude.json`'s two keys were present. Because of that, a
+desktop-spawned council had **no seat substitutions at all** — the gemini seat
+would have invoked the real gemini-cli, whose free-tier OAuth died 2026-06-19.
+The `COUNCIL_*` / `CURSOR_MODEL` / `OPENCODE_MODEL` seat config is therefore
+mirrored into both files on purpose; keep them in step, and note that the
+desktop app caches this env at session start, so a change needs a new session.
 
 **Consequence: an env var is not a reliable place to fix anything that must hold
 everywhere.** Put the value in the code default and leave the env var as an
