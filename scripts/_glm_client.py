@@ -1,4 +1,4 @@
-"""Shared async client for GLM-5.2 via Z.ai's Anthropic-compatible endpoint.
+"""Shared async client for GLM-5.3 via Z.ai's Anthropic-compatible endpoint.
 
 Used by the shadow-replay scripts (shadow_glm_judge/seat/rater.py) so the GLM
 candidate is evaluated through the SAME endpoint family the `claudeor` seat would
@@ -12,7 +12,7 @@ owlex's CLAUDE.md / MCP context. Direct /v1/messages isolates the model.
 Config (per the External-CLI-rotation pattern — pin via env, safe defaults):
   OWLEX_GLM_BASE_URL  default https://api.z.ai/api/anthropic
   OWLEX_GLM_TOKEN     GLM Coding Plan key (required; falls back to ANTHROPIC_AUTH_TOKEN)
-  OWLEX_GLM_MODEL     default glm-5.2
+  OWLEX_GLM_MODEL     default glm-5.3
   OWLEX_GLM_TIMEOUT   default 120 (seconds)
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ import httpx
 
 GLM_BASE_URL = os.getenv("OWLEX_GLM_BASE_URL", "https://api.z.ai/api/anthropic").rstrip("/")
 GLM_TOKEN = os.getenv("OWLEX_GLM_TOKEN") or os.getenv("ANTHROPIC_AUTH_TOKEN") or ""
-GLM_MODEL = os.getenv("OWLEX_GLM_MODEL", "glm-5.2")
+GLM_MODEL = os.getenv("OWLEX_GLM_MODEL", "glm-5.3")
 GLM_TIMEOUT = int(os.getenv("OWLEX_GLM_TIMEOUT", "120"))
 # "", "high", or "max". When set, requests enable extended thinking at that effort.
 # Verified param shape against api.z.ai/api/anthropic: thinking{enabled} + reasoning_effort.

@@ -146,37 +146,37 @@ class GrokConfig:
 
 @dataclass(frozen=True)
 class GlmBlindConfig:
-    """Configuration for the optional GLM-5.2 background blind-rater.
+    """Configuration for the optional GLM-5.3 background blind-rater.
 
-    When enabled, after each council's R1 round, GLM-5.2 blind-rates the
+    When enabled, after each council's R1 round, GLM-5.3 blind-rates the
     anonymized R1 responses and persists per-agent scores under rater='glm_blind'
     alongside the existing 'claude_blind' rater. Off by default — zero latency
     impact when disabled.
 
-    See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
+    See docs/solutions/architecture/glm-5.3-2026-06-shadow-eval.md.
     """
     enabled: bool = False       # OWLEX_GLM_BLIND_ENABLED (default off)
-    model: str = "glm-5.2"     # OWLEX_GLM_BLIND_MODEL
+    model: str = "glm-5.3"     # OWLEX_GLM_BLIND_MODEL
     reasoning: str = "max"     # OWLEX_GLM_BLIND_REASONING (max uses extended thinking)
     timeout: int = 120         # OWLEX_GLM_BLIND_TIMEOUT (seconds; GLM@max is ~100s/call)
 
 
 @dataclass(frozen=True)
 class GlmEscalationConfig:
-    """Configuration for the optional GLM-5.2 tie-breaker on R1 disagreement.
+    """Configuration for the optional GLM-5.3 tie-breaker on R1 disagreement.
 
     When enabled, if auto-mode R1 agreement falls below AUTO_DELIBERATION_THRESHOLD
-    (i.e. R2 will fire), GLM-5.2 is invoked ONCE as an additional opinion and
+    (i.e. R2 will fire), GLM-5.3 is invoked ONCE as an additional opinion and
     attached to CouncilResponse.glm_escalation_response. Off by default — zero
     latency impact on consensus or when the flag is unset.
 
     Reasoning effort for the GLM-via-opencode escalation is controlled by
     OWLEX_GLM_OC_VARIANT (shared with the GLM seat), not a separate escalation var.
 
-    See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
+    See docs/solutions/architecture/glm-5.3-2026-06-shadow-eval.md.
     """
     enabled: bool = False        # OWLEX_GLM_ESCALATION_ENABLED (default off)
-    model: str = "zai/glm-5.2"  # OWLEX_GLM_ESCALATION_MODEL
+    model: str = "zai/glm-5.3"  # OWLEX_GLM_ESCALATION_MODEL
     timeout: int = 120           # OWLEX_GLM_ESCALATION_TIMEOUT (seconds)
 
 
@@ -325,14 +325,14 @@ def load_config() -> OwlexConfig:
 
     glm_blind = GlmBlindConfig(
         enabled=_get_bool("OWLEX_GLM_BLIND_ENABLED", False),
-        model=os.environ.get("OWLEX_GLM_BLIND_MODEL", "glm-5.2"),
+        model=os.environ.get("OWLEX_GLM_BLIND_MODEL", "glm-5.3"),
         reasoning=os.environ.get("OWLEX_GLM_BLIND_REASONING", "max"),
         timeout=_get_int("OWLEX_GLM_BLIND_TIMEOUT", 120, min_value=1),
     )
 
     glm_escalation = GlmEscalationConfig(
         enabled=_get_bool("OWLEX_GLM_ESCALATION_ENABLED", False),
-        model=os.environ.get("OWLEX_GLM_ESCALATION_MODEL", "zai/glm-5.2"),
+        model=os.environ.get("OWLEX_GLM_ESCALATION_MODEL", "zai/glm-5.3"),
         timeout=_get_int("OWLEX_GLM_ESCALATION_TIMEOUT", 120, min_value=1),
     )
 

@@ -68,10 +68,10 @@ class SkillsEvent:
 
 @dataclass(frozen=True)
 class GlmBlindEvent:
-    """Background GLM-5.2 blind-rating of R1 responses.
+    """Background GLM-5.3 blind-rating of R1 responses.
 
     When OWLEX_GLM_BLIND_ENABLED=1, the council emits this after R1 completes.
-    The handler calls GLM-5.2 via Z.ai's Anthropic-compatible endpoint,
+    The handler calls GLM-5.3 via Z.ai's Anthropic-compatible endpoint,
     applies the same deterministic anonymization as claude_blind (salt='blind:{council_id}'),
     parses per-letter ratings, and stores per-agent scores under rater='glm_blind'.
 
@@ -149,7 +149,7 @@ async def _handle_skills(event: SkillsEvent) -> None:
     )
 
 
-# === GLM-5.2 blind-rater helpers (ported from scripts/shadow_glm_rater.py) ===
+# === GLM-5.3 blind-rater helpers (ported from scripts/shadow_glm_rater.py) ===
 
 _BLIND_RATE_PROMPT = """\
 You are a senior software engineering reviewer evaluating multiple AI advisors' answers to the same question.
@@ -214,7 +214,7 @@ def _parse_glm_ratings(raw: str, expected_letters: list[str]) -> tuple[dict[str,
 
 
 async def _handle_glm_blind(event: GlmBlindEvent) -> None:
-    """Background handler: call GLM-5.2 to blind-rate R1 responses.
+    """Background handler: call GLM-5.3 to blind-rate R1 responses.
 
     Uses assign_labels with salt='blind:{council_id}' — same deterministic
     anonymization as claude_blind so per-agent scores are directly comparable.
@@ -303,7 +303,7 @@ _GLM_BLIND_HANDLER = _handle_glm_blind
 # Two isolated lanes:
 #   1. _queue          — fast events (pairwise, position-delta, skills); handler
 #                        latency is bounded by the LLM judge (~4s per pair).
-#   2. _glm_blind_queue — slow events (GLM-5.2 blind-rating, up to ~120s per
+#   2. _glm_blind_queue — slow events (GLM-5.3 blind-rating, up to ~120s per
 #                        call). Kept on a separate queue + worker so a slow GLM
 #                        call never delays a subsequent PairwiseEvent or SkillsEvent.
 
