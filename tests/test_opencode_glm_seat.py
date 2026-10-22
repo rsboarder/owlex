@@ -1,7 +1,7 @@
 """
-Tests for the GLM-5.2 seat integration in the OpenCode runner.
+Tests for the GLM-5.3 seat integration in the OpenCode runner.
 
-Activation: COUNCIL_SUBSTITUTION_MODELS=<seat>:opencode:zai/glm-5.2
+Activation: COUNCIL_SUBSTITUTION_MODELS=<seat>:opencode:zai/glm-5.3
 Docs: docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md
 """
 
@@ -18,7 +18,7 @@ from owlex.agents.opencode import OpenCodeRunner, _is_glm_model, _read_glm_token
 
 class TestIsGlmModel:
     def test_zai_prefix_detected(self):
-        assert _is_glm_model("zai/glm-5.2") is True
+        assert _is_glm_model("zai/glm-5.3") is True
 
     def test_glm_in_model_name(self):
         assert _is_glm_model("some-provider/glm-4") is True
@@ -39,7 +39,7 @@ class TestIsGlmModel:
         assert _is_glm_model("") is False
 
     def test_case_insensitive(self):
-        assert _is_glm_model("ZAI/GLM-5.2") is True
+        assert _is_glm_model("ZAI/GLM-5.3") is True
 
 
 # --- _read_glm_token ---------------------------------------------------------
@@ -87,7 +87,7 @@ class TestBuildGlmEnvOverrides:
         with open(cfg_path) as f:
             cfg = json.load(f)
         assert "zai" in cfg["provider"]
-        assert "glm-5.2" in cfg["provider"]["zai"]["models"]
+        assert "glm-5.3" in cfg["provider"]["zai"]["models"]
 
     def test_sets_glm_token_when_available(self):
         with patch("owlex.agents.opencode._read_glm_token", return_value="secret-tok"):
@@ -110,7 +110,7 @@ class TestBuildGlmEnvOverrides:
             overrides = _build_glm_env_overrides("max")
         with open(overrides["OPENCODE_CONFIG"]) as f:
             cfg = json.load(f)
-        model_opts = cfg["provider"]["zai"]["models"]["glm-5.2"]["options"]
+        model_opts = cfg["provider"]["zai"]["models"]["glm-5.3"]["options"]
         assert model_opts["reasoning_effort"] == "max"
 
 
@@ -126,7 +126,7 @@ class TestOpenCodeRunnerGlmExec:
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         assert "--variant" in cmd.command
         idx = cmd.command.index("--variant")
         assert cmd.command[idx + 1] == "high"
@@ -135,10 +135,10 @@ class TestOpenCodeRunnerGlmExec:
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         assert "--model" in cmd.command
         idx = cmd.command.index("--model")
-        assert cmd.command[idx + 1] == "zai/glm-5.2"
+        assert cmd.command[idx + 1] == "zai/glm-5.3"
 
     def test_glm_no_format_json(self, runner):
         """GLM path must NOT add --format json (hangs on Z.ai provider)."""
@@ -146,14 +146,14 @@ class TestOpenCodeRunnerGlmExec:
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
             mock_cfg.opencode.json_output = True  # even if global json_output is on
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         assert "--format" not in cmd.command
 
     def test_glm_env_overrides_present(self, runner):
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="my-token"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         assert cmd.env_overrides is not None
         assert "XDG_DATA_HOME" in cmd.env_overrides
         assert "OPENCODE_CONFIG" in cmd.env_overrides
@@ -163,15 +163,15 @@ class TestOpenCodeRunnerGlmExec:
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
-        assert cmd.model == "zai/glm-5.2"
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
+        assert cmd.model == "zai/glm-5.3"
 
     def test_glm_uses_env_variant(self, runner, monkeypatch):
         monkeypatch.setenv("OWLEX_GLM_OC_VARIANT", "max")
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         idx = cmd.command.index("--variant")
         assert cmd.command[idx + 1] == "max"
 
@@ -180,7 +180,7 @@ class TestOpenCodeRunnerGlmExec:
         with patch("owlex.agents.opencode.config") as mock_cfg, \
              patch("owlex.agents.opencode._read_glm_token", return_value="tok"):
             mock_cfg.opencode.model = None
-            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.2")
+            cmd = runner.build_exec_command(prompt="Q", model_override="zai/glm-5.3")
         idx = cmd.command.index("--variant")
         assert cmd.command[idx + 1] == "high"
 

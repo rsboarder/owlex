@@ -181,7 +181,7 @@ class CouncilResponse(BaseModel):
     # Maps agent name to role ID, e.g., {"codex": "security", "gemini": "perf"}
     roles: dict[str, str] | None = None
     metadata: CouncilMetadata
-    # Optional GLM-5.2 tie-breaker opinion. Populated on R1 disagreement when
+    # Optional GLM-5.3 tie-breaker opinion. Populated on R1 disagreement when
     # OWLEX_GLM_ESCALATION_ENABLED=1. None on consensus or when flag is off.
     # See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md (TASK-20).
     # Note: CouncilRound is intentionally NOT modified (6 hard-coded seat fields

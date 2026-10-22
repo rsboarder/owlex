@@ -1,4 +1,4 @@
-"""Async client for GLM-5.2 via Z.ai's Anthropic-compatible endpoint.
+"""Async client for GLM-5.3 via Z.ai's Anthropic-compatible endpoint.
 
 Ported from scripts/_glm_client.py for production use by the glm_blind
 blind-rater derivation handler.
@@ -14,7 +14,7 @@ Token resolution (in order):
 
 Config (per external-CLI-rotation pattern — pin via env, safe defaults):
   OWLEX_GLM_BASE_URL  default https://api.z.ai/api/anthropic
-  OWLEX_GLM_MODEL     default glm-5.2
+  OWLEX_GLM_MODEL     default glm-5.3
   OWLEX_GLM_TIMEOUT   default 120 (seconds)
 
 See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md for context.
@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 
 GLM_BASE_URL = os.getenv("OWLEX_GLM_BASE_URL", "https://api.z.ai/api/anthropic").rstrip("/")
-GLM_MODEL = os.getenv("OWLEX_GLM_MODEL", "glm-5.2")
+GLM_MODEL = os.getenv("OWLEX_GLM_MODEL", "glm-5.3")
 GLM_TIMEOUT = int(os.getenv("OWLEX_GLM_TIMEOUT", "120"))
 
 

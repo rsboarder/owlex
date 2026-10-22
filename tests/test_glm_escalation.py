@@ -1,4 +1,4 @@
-"""Tests for TASK-20: GLM-5.2 tie-breaker escalation on R1 disagreement.
+"""Tests for TASK-20: GLM-5.3 tie-breaker escalation on R1 disagreement.
 
 Mirrors tests/test_council.py style + autouse _isolate_owlex_home fixture.
 Never hits the real Z.ai API — engine.run_agent is mocked in every test.
@@ -54,7 +54,7 @@ def test_glm_escalation_config_defaults(monkeypatch):
     monkeypatch.delenv("OWLEX_GLM_ESCALATION_MODEL", raising=False)
     monkeypatch.delenv("OWLEX_GLM_ESCALATION_TIMEOUT", raising=False)
     cfg = load_config()
-    assert cfg.glm_escalation.model == "zai/glm-5.2"
+    assert cfg.glm_escalation.model == "zai/glm-5.3"
     assert cfg.glm_escalation.timeout == 120
     assert not hasattr(cfg.glm_escalation, "variant"), (
         "variant must not exist on GlmEscalationConfig — use OWLEX_GLM_OC_VARIANT instead"
@@ -109,7 +109,7 @@ def _standard_run_agent(task, runner, mode="exec", **kwargs):
     task.completion_time = datetime.now()
 
 
-def _make_glm_escalation_config(enabled=True, model="zai/glm-5.2", timeout=120):
+def _make_glm_escalation_config(enabled=True, model="zai/glm-5.3", timeout=120):
     return types.SimpleNamespace(
         enabled=enabled, model=model, timeout=timeout,
     )
@@ -120,7 +120,7 @@ def _make_glm_escalation_config(enabled=True, model="zai/glm-5.2", timeout=120):
 # ---------------------------------------------------------------------------
 
 async def test_glm_escalation_invoked_on_disagreement_when_enabled():
-    """GLM-5.2 is called exactly once and glm_escalation_response is set on disagreement."""
+    """GLM-5.3 is called exactly once and glm_escalation_response is set on disagreement."""
     glm_call_count = [0]
     mock_engine = _make_mock_engine()
 

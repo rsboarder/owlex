@@ -1,8 +1,8 @@
 """
 OpenCode CLI agent runner.
 
-GLM-5.2 seat (opt-in): activate via COUNCIL_SUBSTITUTION_MODELS, e.g.:
-  COUNCIL_SUBSTITUTION_MODELS=aichat:opencode:zai/glm-5.2
+GLM-5.3 seat (opt-in): activate via COUNCIL_SUBSTITUTION_MODELS, e.g.:
+  COUNCIL_SUBSTITUTION_MODELS=aichat:opencode:zai/glm-5.3
 Requires ~/.owlex/glm_token. See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
 """
 
@@ -21,7 +21,7 @@ from .base import AgentRunner, AgentCommand
 # --- GLM/Z.ai seat helpers --------------------------------------------------
 
 def _is_glm_model(model: str | None) -> bool:
-    """Return True when the resolved model targets Z.ai / GLM-5.2."""
+    """Return True when the resolved model targets Z.ai / GLM-5.3."""
     if not model:
         return False
     lower = model.lower()
@@ -71,8 +71,8 @@ def _build_glm_env_overrides(variant: str) -> dict[str, str]:
                     "apiKey": "{env:GLM_TOKEN}",
                 },
                 "models": {
-                    "glm-5.2": {
-                        "name": "GLM-5.2 (Z.ai)",
+                    "glm-5.3": {
+                        "name": "GLM-5.3 (Z.ai)",
                         "reasoning": True,
                         "limit": {"context": 204800, "output": 131072},
                         "options": {

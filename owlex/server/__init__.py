@@ -205,7 +205,7 @@ def main():
                 log(f"[WARN] grok seat health-check failed: {_e}")
         asyncio.create_task(_probe_grok())
 
-        # Optional GLM-5.2 blind-rater probe — only when enabled.
+        # Optional GLM-5.3 blind-rater probe — only when enabled.
         # Non-blocking: logs [ok]/[WARN] but never blocks server startup.
         from ..config import config as _config
         if _config.glm_blind.enabled:

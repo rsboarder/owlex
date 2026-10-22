@@ -398,16 +398,16 @@ class TestBuildParticipantsSubstitutionOverride:
 
     Regression: an auth-dead-but-installed gemini binary stayed in ``available``,
     ran natively (exiting on IneligibleTierError), and the
-    ``gemini:opencode:zai/glm-5.2`` override was silently ignored — the seat
+    ``gemini:opencode:zai/glm-5.3`` override was silently ignored — the seat
     failed every council despite a valid config entry.
     """
 
     def test_explicit_runner_override_forces_substitution_for_available_seat(self):
-        by_seat = _resolve_participants({"gemini": ("opencode", "zai/glm-5.2")})
+        by_seat = _resolve_participants({"gemini": ("opencode", "zai/glm-5.3")})
         gem = by_seat["gemini"]
         assert gem.is_substituted is True
         assert gem.donor == "opencode"
-        assert gem.model_override == "zai/glm-5.2"
+        assert gem.model_override == "zai/glm-5.3"
         assert gem.runner.name == "opencode"
         # The donor's own seat is untouched (stays native).
         assert by_seat["opencode"].is_substituted is False
@@ -489,21 +489,21 @@ class TestBuildParticipantsTeamRunnerOverrides:
         still applies under a team that carries no runner_overrides of its own.
         """
         by_seat = _resolve_participants(
-            {"claudeor": ("opencode", "zai/glm-5.2")}, role_spec="code_review",
+            {"claudeor": ("opencode", "zai/glm-5.3")}, role_spec="code_review",
         )
         claudeor = by_seat["claudeor"]
         assert claudeor.is_substituted is True
         assert claudeor.donor == "opencode"
-        assert claudeor.model_override == "zai/glm-5.2"
+        assert claudeor.model_override == "zai/glm-5.3"
 
     def test_no_role_spec_unaffected_by_new_field(self):
         by_seat = _resolve_participants(
-            {"claudeor": ("opencode", "zai/glm-5.2")}, role_spec=None,
+            {"claudeor": ("opencode", "zai/glm-5.3")}, role_spec=None,
         )
         claudeor = by_seat["claudeor"]
         assert claudeor.is_substituted is True
         assert claudeor.donor == "opencode"
-        assert claudeor.model_override == "zai/glm-5.2"
+        assert claudeor.model_override == "zai/glm-5.3"
 
     def test_unknown_runner_in_team_override_drops_the_seat(self):
         """An unknown runner name in a team override must skip the seat —
@@ -544,7 +544,7 @@ class TestBuildParticipantsTeamRunnerOverrides:
 
     def test_team_override_wins_over_global_model_override(self):
         by_seat = _resolve_participants(
-            {"claudeor": ("opencode", "zai/glm-5.2")},
+            {"claudeor": ("opencode", "zai/glm-5.3")},
             role_spec="test_spec",
         )
         assert by_seat["claudeor"].runner.name == "grok"

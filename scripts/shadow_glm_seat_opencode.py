@@ -1,13 +1,13 @@
-"""Shadow-mode R1 generation for GLM-5.2-as-a-seat — HARNESSED via opencode.
+"""Shadow-mode R1 generation for GLM-5.3-as-a-seat — HARNESSED via opencode.
 
 Fair re-run of the seat experiment (the bare-API E2 was confounded — no tools).
-This drives GLM-5.2 through the opencode agent harness (tools + agentic loop), a
+This drives GLM-5.3 through the opencode agent harness (tools + agentic loop), a
 model-agnostic harness like one a production GLM seat would use. opencode runs
 READ-ONLY (edit/bash/webfetch denied) in the owlex repo so GLM can ground its
 answer in real code like the incumbent seats — without mutating anything.
 
 Setup (by the opencode-setup subagent): opencode 1.17.7 at ~/.opencode/bin,
-Z.ai GLM-5.2 provider via the OpenAI-compatible api.z.ai endpoint. Token read from
+Z.ai GLM-5.3 provider via the OpenAI-compatible api.z.ai endpoint. Token read from
 ~/.owlex/glm_token at call time. reasoning=max via --variant. Output is plain text
 on stdout (banner on stderr); --format json hangs on this provider, so we don't use it.
 
@@ -39,7 +39,7 @@ METRICS_PATH = RESULTS_DIR / "seat_r1_metrics_glm_opencode.md"
 
 OPENCODE_BIN = os.path.expanduser("~/.opencode/bin/opencode")
 GLM_TOKEN_FILE = os.path.expanduser("~/.owlex/glm_token")
-OC_MODEL = os.getenv("OWLEX_GLM_OC_MODEL", "zai/glm-5.2")
+OC_MODEL = os.getenv("OWLEX_GLM_OC_MODEL", "zai/glm-5.3")
 OC_VARIANT = os.getenv("OWLEX_GLM_OC_VARIANT", "max")  # high|max
 OC_TIMEOUT = int(os.getenv("OWLEX_GLM_OC_TIMEOUT", "360"))
 REPO_DIR = os.getenv("OWLEX_GLM_OC_CWD", str(Path(__file__).resolve().parents[1]))
@@ -53,7 +53,7 @@ _ISO: tuple[str, str] | None = None
 
 def _ensure_isolated_opencode() -> tuple[str, str]:
     """Throwaway XDG_DATA_HOME (fresh opencode DB — dodges the stale-DB crash) +
-    a read-only OPENCODE_CONFIG carrying the Z.ai/GLM-5.2 provider."""
+    a read-only OPENCODE_CONFIG carrying the Z.ai/GLM-5.3 provider."""
     global _ISO
     if _ISO:
         return _ISO
@@ -72,8 +72,8 @@ def _ensure_isolated_opencode() -> tuple[str, str]:
                     "apiKey": "{env:GLM_TOKEN}",
                 },
                 "models": {
-                    "glm-5.2": {
-                        "name": "GLM-5.2 (Z.ai)",
+                    "glm-5.3": {
+                        "name": "GLM-5.3 (Z.ai)",
                         "reasoning": True,
                         "limit": {"context": 204800, "output": 131072},
                         "options": {"reasoning_effort": "max", "thinking": {"type": "enabled"}},
@@ -131,7 +131,7 @@ def load_councils(limit: int) -> list[dict]:
 
 
 async def call_opencode(prompt: str) -> tuple[str, float, str | None]:
-    """Generate a candidate R1 by driving GLM-5.2 through opencode (read-only,
+    """Generate a candidate R1 by driving GLM-5.3 through opencode (read-only,
     reasoning=OC_VARIANT, in REPO_DIR). Returns (envelope, elapsed, error); the
     reply is wrapped as {"text": ...} so parse_glm_text() works unchanged."""
     try:
@@ -291,7 +291,7 @@ def write_metrics(rows: list[dict]):
         return mean, median, max(xs)
 
     md = [
-        "# GLM-5.2-as-Seat (HARNESSED via opencode) — Structural R1 Quality (Shadow)",
+        "# GLM-5.3-as-Seat (HARNESSED via opencode) — Structural R1 Quality (Shadow)",
         "",
         f"**Candidate**: `{SEAT_LABEL}` = {OC_MODEL} via opencode (read-only, --variant {OC_VARIANT})",
         "**Note**: distinct from the incumbent `opencode` seat (that's a different model in the same harness).",

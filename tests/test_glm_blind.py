@@ -1,4 +1,4 @@
-"""Tests for the GLM-5.2 background blind-rater (GlmBlindEvent handler).
+"""Tests for the GLM-5.3 background blind-rater (GlmBlindEvent handler).
 
 Mirrors tests/test_derivations.py style + autouse _isolate_owlex_home fixture.
 Never hits the real Z.ai API — glm_client.call_glm is mocked in every test.
@@ -15,7 +15,7 @@ import pytest
 from owlex import derivations
 
 
-def _make_glm_blind_config(enabled=True, model="glm-5.2", reasoning="max", timeout=120):
+def _make_glm_blind_config(enabled=True, model="glm-5.3", reasoning="max", timeout=120):
     """Return a simple namespace mimicking GlmBlindConfig for monkeypatching.
 
     OwlexConfig is frozen=True so we cannot setattr on it directly.
@@ -63,7 +63,7 @@ def test_glm_blind_config_defaults(monkeypatch):
     monkeypatch.delenv("OWLEX_GLM_BLIND_TIMEOUT", raising=False)
     from owlex.config import load_config
     cfg = load_config()
-    assert cfg.glm_blind.model == "glm-5.2"
+    assert cfg.glm_blind.model == "glm-5.3"
     assert cfg.glm_blind.reasoning == "max"
     assert cfg.glm_blind.timeout == 120
 

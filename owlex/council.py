@@ -322,7 +322,7 @@ class Council:
 
         deliberate, agreement_score, agreement_reason = await self._resolve_deliberation(deliberate, prompt, r1_contents)
 
-        # GLM-5.2 escalation: invoke once on disagreement when flag is on.
+        # GLM-5.3 escalation: invoke once on disagreement when flag is on.
         # Runs before R2 so latency is additive, not multiplied — caller accepted
         # this trade-off (disagreement path only, flag off by default).
         # See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md (TASK-20).
@@ -348,7 +348,7 @@ class Council:
             _derivations.emit(_derivations.PositionDeltaEvent(
                 round_1=round_1, round_2=round_2,
             ))
-        # Optional background GLM-5.2 blind-rater. Off by default (zero latency
+        # Optional background GLM-5.3 blind-rater. Off by default (zero latency
         # impact when disabled). Enable via OWLEX_GLM_BLIND_ENABLED=1 + token.
         # See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
         if config.glm_blind.enabled:
@@ -464,7 +464,7 @@ class Council:
         working_directory: str | None,
         timeout: int,
     ) -> "AgentResponse | None":
-        """Invoke GLM-5.2 once as a tie-breaker opinion on R1 disagreement.
+        """Invoke GLM-5.3 once as a tie-breaker opinion on R1 disagreement.
 
         Uses AGENT_RUNNERS[Agent.OPENCODE] with model_override=config.glm_escalation.model
         so the opencode-GLM runner handles Z.ai auth / XDG isolation / --variant.
@@ -479,8 +479,8 @@ class Council:
         to a future task.
         """
         try:
-            self.log("GLM escalation: invoking GLM-5.2 tie-breaker (R1 disagreement detected)")
-            await self.notify("GLM escalation: querying GLM-5.2 for additional opinion")
+            self.log("GLM escalation: invoking GLM-5.3 tie-breaker (R1 disagreement detected)")
+            await self.notify("GLM escalation: querying GLM-5.3 for additional opinion")
             task = self._engine.create_task(
                 command="council_glm_escalation",
                 args={"prompt": prompt, "working_directory": working_directory},
