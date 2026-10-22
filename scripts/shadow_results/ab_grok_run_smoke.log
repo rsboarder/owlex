@@ -1,0 +1,15 @@
+[init] loading corpus limit=3 days=60
+[init] 3 councils (model=grok-4.5)
+[init] resume=0 remaining_generate=3 rate=False
+[init] A=baseline B=contract_strip → ab_grok_baseline_vs_contract_strip.jsonl
+[1/3] 203545 generating…
+[1/3] 203545 A=165.76s pre=948 B=96.11s pre=0 errA=None errB=None
+[2/3] 191803 generating…
+[2/3] 191803 A=136.88s pre=495 B=117.24s pre=0 errA=None errB=None
+[3/3] 191503 generating…
+[3/3] 191503 A=156.99s pre=544 B=134.73s pre=0 errA=None errB=None
+
+[done] /Users/rsboarder/workspace/owlex/scripts/shadow_results/ab_grok_baseline_vs_contract_strip.jsonl
+[done] /Users/rsboarder/workspace/owlex/scripts/shadow_results/ab_grok_baseline_vs_contract_strip.md
+[gates] ship=True {'G1_reliability': True, 'G2_quality_noninferior': True, 'G3_quality_or_latency': True, 'G4_cleanliness': True, 'G5_no_verbosity_explosion': True}
+[stats] med_s A/B=157.0/117.2 preamble=662.3/0.0 win_rate_B=None delta_help=None
