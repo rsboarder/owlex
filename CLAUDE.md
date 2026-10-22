@@ -91,7 +91,29 @@ Worked example (Grok-build May 2026): `docs/solutions/architecture/grok-build-20
 
 ## Environment
 
-Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
+Owlex reads these at MCP-server startup. **Which file supplies them depends on
+the client that spawned the server** — measured 2026-10-22, three registrations
+existed at once and disagreed:
+
+| Source | Status on 2026-10-22 |
+|---|---|
+| `~/.claude.json` → `mcpServers.owlex.env` | **The only env the desktop-spawned server received.** Held a stale `OWLEX_DEFAULT_TIMEOUT=600`. |
+| `~/.claude/settings.json` → `env` | Reached servers spawned by the terminal CLI, not the desktop one. Supplies the `COUNCIL_*` seat config. |
+| `~/.claude/.mcp.json` → `mcpServers.owlex.env` | Inert, and configured differently again (`COUNCIL_EXCLUDE_AGENTS=aichat,opencode`). |
+
+Verified by `ps eww` on the live server: `settings.json`-only keys
+(`DELEGATION_HINT_OFF`, `HANDOVER_TRIGGER_PCT`) were absent from its
+environment while `~/.claude.json`'s two keys were present.
+
+**Consequence: an env var is not a reliable place to fix anything that must hold
+everywhere.** Put the value in the code default and leave the env var as an
+override — that is why `CODEX_DEFAULT_MODEL` and `default_timeout` are pinned in
+`owlex/config.py` rather than in a settings file. Before trusting any value
+below, check it against the running process, not against a settings file:
+
+    ps eww -p $(pgrep -n -f owlex-server) | tr ' ' '\n' | grep -E '^(OWLEX|COUNCIL)'
+
+Defaults and overrides:
 
 | Var | Default | Purpose |
 |---|---|---|
