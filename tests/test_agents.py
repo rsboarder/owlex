@@ -631,6 +631,7 @@ def _mock_grok_cfg(mock_config, **overrides):
         "clean_output": True,
         "output_contract": False,
         "strip_tool_narration": False,
+        "isolate_mcp": False,
     }
     defaults.update(overrides)
     for key, value in defaults.items():

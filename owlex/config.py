@@ -142,6 +142,21 @@ class GrokConfig:
     clean_output: bool = True
     output_contract: bool = True  # OWLEX_GROK_OUTPUT_CONTRACT
     strip_tool_narration: bool = True  # OWLEX_GROK_STRIP_TOOL_NARRATION
+    # Run grok with an empty HOME so it discovers no MCP servers. Grok resolves
+    # them from Claude Code's config (``$HOME/.claude.json`` global block plus
+    # the entry keyed by cwd), which booted ~17 npm MCP servers per seat run —
+    # one of them owlex-server itself. Measured across 20 council sessions,
+    # seats called only grok's built-in grep/read_file/run_terminal_command and
+    # never an mcp__* tool, so the stack was pure overhead. Set
+    # OWLEX_GROK_ISOLATE_MCP=false to restore the pre-2026-08 environment.
+    isolate_mcp: bool = True  # OWLEX_GROK_ISOLATE_MCP
+    # Probe-stamp lifetimes. Parsed here, with the module's own validating
+    # parser, because these are hand-typed operator knobs: a bare int() at
+    # module scope raised ValueError at IMPORT time on an empty value, which
+    # took down owlex.agents and with it the MCP server, and silently accepted
+    # 0 (disabling caching, restoring the probe storm).
+    probe_ttl: int = 86400  # OWLEX_GROK_PROBE_TTL — successful probe
+    probe_fail_ttl: int = 600  # OWLEX_GROK_PROBE_FAIL_TTL — failed probe
 
 
 @dataclass(frozen=True)
@@ -153,7 +168,7 @@ class GlmBlindConfig:
     alongside the existing 'claude_blind' rater. Off by default — zero latency
     impact when disabled.
 
-    See docs/solutions/architecture/glm-5.3-2026-06-shadow-eval.md.
+    See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
     """
     enabled: bool = False       # OWLEX_GLM_BLIND_ENABLED (default off)
     model: str = "glm-5.3"     # OWLEX_GLM_BLIND_MODEL
@@ -173,7 +188,7 @@ class GlmEscalationConfig:
     Reasoning effort for the GLM-via-opencode escalation is controlled by
     OWLEX_GLM_OC_VARIANT (shared with the GLM seat), not a separate escalation var.
 
-    See docs/solutions/architecture/glm-5.3-2026-06-shadow-eval.md.
+    See docs/solutions/architecture/glm-5.2-2026-06-shadow-eval.md.
     """
     enabled: bool = False        # OWLEX_GLM_ESCALATION_ENABLED (default off)
     model: str = "zai/glm-5.3"  # OWLEX_GLM_ESCALATION_MODEL
@@ -313,6 +328,9 @@ def load_config() -> OwlexConfig:
         clean_output=_get_bool("OWLEX_GROK_CLEAN_OUTPUT", True),
         output_contract=_get_bool("OWLEX_GROK_OUTPUT_CONTRACT", True),
         strip_tool_narration=_get_bool("OWLEX_GROK_STRIP_TOOL_NARRATION", True),
+        isolate_mcp=_get_bool("OWLEX_GROK_ISOLATE_MCP", True),
+        probe_ttl=_get_int("OWLEX_GROK_PROBE_TTL", 86400, min_value=1),
+        probe_fail_ttl=_get_int("OWLEX_GROK_PROBE_FAIL_TTL", 600, min_value=1),
     )
 
     council = CouncilConfig(
