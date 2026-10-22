@@ -18,8 +18,10 @@ import json
 import os
 import tempfile
 
+from owlex.config import CODEX_DEFAULT_MODEL
 
-MODEL = os.getenv("OWLEX_SECOND_OPINION_MODEL", "gpt-5.5")
+
+MODEL = os.getenv("OWLEX_SECOND_OPINION_MODEL", CODEX_DEFAULT_MODEL)
 
 # Quality-first: a real review, not the agreement judge's shallow "low".
 REASONING = os.getenv("OWLEX_SECOND_OPINION_REASONING", "high")

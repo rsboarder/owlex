@@ -10,6 +10,7 @@ import asyncio
 import os
 import signal
 import sys
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,35 @@ class _StderrTee:
         return self._original.fileno()
 
 
+def _prune_old_server_logs(log_dir: Path) -> None:
+    """Delete ``server-*.log`` files older than the retention window.
+
+    Every MCP server start opens a new ``server-{pid}.log`` and nothing ever
+    removed them: 9373 files / 44 MB had accumulated by 2026-10 across ~6
+    months. Only this module's own filename pattern is touched, so anything
+    else an operator keeps in the directory survives. Never raises — this sits
+    on the server-startup path, and losing a log is not worth failing a boot.
+    Set ``OWLEX_LOG_RETENTION_DAYS=0`` to keep everything.
+    """
+    try:
+        retention_days = int(os.environ.get("OWLEX_LOG_RETENTION_DAYS", "14"))
+    except ValueError:
+        retention_days = 14
+    if retention_days <= 0:
+        return
+
+    cutoff = time.time() - retention_days * 86400
+    keep = f"server-{os.getpid()}.log"
+    for path in log_dir.glob("server-*.log"):
+        if path.name == keep:
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:  # noqa: PERF203 — one bad file must not stop the sweep
+            continue
+
+
 def _install_stderr_logging() -> Path | None:
     """Tee stderr to ~/.owlex/logs/server-{pid}.log; install crash hook."""
     if os.environ.get("OWLEX_DISABLE_SERVER_LOG") == "1":
@@ -68,6 +98,8 @@ def _install_stderr_logging() -> Path | None:
     except OSError as e:
         print(f"[owlex] could not create log dir {log_dir}: {e}", file=sys.stderr, flush=True)
         return None
+
+    _prune_old_server_logs(log_dir)
 
     log_path = log_dir / f"server-{os.getpid()}.log"
     try:

@@ -65,7 +65,18 @@ See `docs/solutions/protocols/cross-layer-reaches-need-protocol-contracts.md`.
 
 **Problem**: `AGREEMENT_MODEL = "gemini-2.5-flash"` hardcoded. Cursor removed it from catalog. Owlex silently fell back to overlap heuristic for weeks; every R1→R2 decision was string-overlap, not LLM judge. Repeated with `gemini-3-flash` after Google's preview deprecation — same silent failure mode.
 
-**Solution**: Every pinned model identifier is `os.getenv("OWLEX_*_MODEL", "default")`. Startup probe in `server.main()` calls `agreement.probe_agreement_model(timeout=10s)` and logs `[ok]`/`[WARN]` line. Recovery is one env-var edit in `~/.claude/settings.json`. As of 2026-05-23 the judge runs through codex CLI with `gpt-5.5` + `reasoning_effort=low` — eliminates cursor's catalog as a moving part and gives ~4s per judge call.
+**Solution**: Every pinned model identifier is `os.getenv("OWLEX_*_MODEL", CODEX_DEFAULT_MODEL)`, and `CODEX_DEFAULT_MODEL` (`owlex/config.py`) is the one place a rotation is fixed. The judge runs through codex CLI with `reasoning_effort=low` — eliminates cursor's catalog as a moving part and gives ~4s per judge call.
+
+**Third instance, 2026-10:** `gpt-5.5` started returning `400 invalid_request_error: "not supported when using Codex with a ChatGPT account"`. The judge degraded to the overlap heuristic for nine days (19 of 21 councils) and `second_opinion` — which has no fallback — failed outright, because the two modules each carried their own `gpt-5.5` default. The startup `[WARN]` fired every time; nobody reads `~/.owlex/logs/server-<pid>.log`.
+
+**Detect it from the DB, not the logs:**
+
+```sql
+SELECT date(completed_at), agreement_score, substr(agreement_reason,1,40)
+FROM council_outcomes ORDER BY completed_at DESC LIMIT 20;
+```
+
+`agreement_reason = 'judge failed'` means heuristic. A live judge writes prose and scores 3–4; the heuristic scores 1.3–2.4, always under `AUTO_DELIBERATION_THRESHOLD = 4.0`, so R2 fires on every council — slower and pricier, never visibly wrong.
 See `docs/solutions/external-tools/cli-catalog-rotation-needs-health-check.md`.
 
 ### Shadow-Replay Required Before New Seat/Judge/Rater Integration
@@ -85,17 +96,20 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
 | Var | Default | Purpose |
 |---|---|---|
 | `COUNCIL_EXCLUDE_AGENTS` | `""` | CSV of seats to skip (e.g. `aichat,opencode`) |
-| `COUNCIL_SUBSTITUTION_MODELS` | `""` | `seat:runner:model,...` (e.g. `claudeor:codex:gpt-5.5`) |
+| `COUNCIL_SUBSTITUTION_MODELS` | `""` | `seat:runner:model,...` (e.g. `aichat:grok:grok-4.5`). Only fires for seats that are actually available. |
 | `CURSOR_MODEL` | (cursor default) | Pin cursor seat's model (e.g. `composer-2.5`) |
-| `OWLEX_AGREEMENT_MODEL` | `gpt-5.5` | Model used by the judge (codex CLI) |
+| `OWLEX_CODEX_MODEL` | `gpt-5.6-sol` | **Single rotation point** for owlex's own codex calls (judge + `second_opinion`). Council seats are unaffected. |
+| `OWLEX_AGREEMENT_MODEL` | `OWLEX_CODEX_MODEL` | Per-call-site override for the judge (codex CLI) |
 | `OWLEX_AGREEMENT_REASONING` | `low` | Reasoning effort for judge (`low`/`medium`/`high`) |
 | `OWLEX_AGREEMENT_TIMEOUT` | `90` | Per-call timeout for agreement judge (s) |
-| `OWLEX_SECOND_OPINION_MODEL` | `gpt-5.5` | Model for the `second_opinion` tool (codex CLI) |
+| `OWLEX_SECOND_OPINION_MODEL` | `OWLEX_CODEX_MODEL` | Per-call-site override for the `second_opinion` tool |
 | `OWLEX_SECOND_OPINION_REASONING` | `high` | Reasoning effort for `second_opinion` (`low`/`medium`/`high`) |
 | `OWLEX_SECOND_OPINION_TIMEOUT` | `120` | Per-call timeout for `second_opinion` (s) |
+| `OWLEX_DEFAULT_TIMEOUT` | `900` | Per-call ceiling for every seat. Sized to the slowest seat (opencode p90=588s), not the fastest. |
 | `OWLEX_HOME` | `~/.owlex` | Persistence root. Set by tests' autouse fixture. |
 | `OWLEX_AGENT_MAX_OUTPUT_BYTES` | `25_000_000` | Per-stream output cap for runaway agents |
 | `OWLEX_DISABLE_SERVER_LOG` | `""` | Set `1` to skip stderr-tee log file |
+| `OWLEX_LOG_RETENTION_DAYS` | `14` | Age at which `logs/server-*.log` is swept at startup. `0` keeps everything. |
 | `OWLEX_GROK_MODEL` | `grok-4.5` | Model for the grok runner (aichat seat via substitution) |
 | `OWLEX_GROK_EFFORT` | `medium` | Grok reasoning effort (`low`/`medium`/`high`) |
 | `OWLEX_GROK_OUTPUT_CONTRACT` | `true` | Append Verdict/Evidence/Risks/Recommendation suffix (Phase-0 A/B) |
@@ -114,6 +128,8 @@ Owlex reads these at MCP-server startup (from `~/.claude/settings.json` `env`):
   - `tests/test_derivations.py` — long-lived worker semantics.
   - `tests/test_fail_pattern_recovery.py` — stdout recovery invariant.
   - `tests/test_agreement_probe.py` — model probe behavior.
+  - `tests/test_codex_model_pin.py` — judge + `second_opinion` rotate from one pin.
+  - `tests/test_log_retention.py` — startup log sweep stays inside its own filename pattern.
   - `tests/test_output_cap.py` — runaway-output kill.
   - `tests/test_heartbeat.py` — last_output_monotonic propagation.
   - `tests/test_recursion_fence.py` — OWLEX_COUNCIL_DEPTH inheritance.
